@@ -8,18 +8,7 @@ on:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            generator: Ninja
-            cc: gcc
-          - os: macos-latest
-            generator: Ninja
-            cc: clang
-
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
@@ -27,19 +16,12 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install tools (Windows)
-        if: runner.os == 'Windows'
+      - name: Install Ninja
         shell: pwsh
-        run: |
-          choco install ninja -y
-
-      - name: Install tools (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install ninja
+        run: choco install ninja -y
 
       - name: Configure
-        run: cmake -S . -B build -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
       - name: Build
         run: cmake --build build --parallel
