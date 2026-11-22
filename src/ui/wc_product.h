@@ -130,6 +130,7 @@ void wc_cleaner_start_analyze(wc_cleaner_state *st);
 void wc_cleaner_start_clean(wc_cleaner_state *st);
 void wc_cleaner_cancel_job(wc_cleaner_state *st);
 void wc_cleaner_select_all(wc_cleaner_state *st, bool select);
+void wc_cleaner_select_category(wc_cleaner_state *st, wc_category cat, bool select);
 
 void wc_exclusions_reload(wc_cleaner_state *st);
 void wc_cookies_reload(wc_cleaner_state *st);

@@ -116,8 +116,19 @@ void wc_cleaner_cancel_job(wc_cleaner_state *st) {
 
 void wc_cleaner_select_all(wc_cleaner_state *st, bool select) {
     if (!st || st->running) return;
+    wada_ui_confirm_reset(&st->confirm);
     for (int i = 0; i < st->target_count; i++) {
         st->selected[i] = select;
+    }
+}
+
+void wc_cleaner_select_category(wc_cleaner_state *st, wc_category cat, bool select) {
+    if (!st || st->running) return;
+    wada_ui_confirm_reset(&st->confirm);
+    for (int i = 0; i < st->target_count; i++) {
+        if (st->defs[i].category == cat) {
+            st->selected[i] = select;
+        }
     }
 }
 
@@ -566,6 +577,23 @@ static const wada_i18n_pair wc_cleaner_strings[] = {
     {"Cancel", "Hủy"},
     {"Select All", "Chọn tất cả"},
     {"Clear", "Bỏ chọn"},
+    {"Ready to Analyze", "Sẵn sàng phân tích"},
+    {"Ready to Clean", "Sẵn sàng dọn dẹp"},
+    {"Analyzing…", "Đang phân tích…"},
+    {"Cleaning…", "Đang dọn dẹp…"},
+    {"Previewing…", "Đang xem trước…"},
+    {"Clean Complete", "Đã dọn xong"},
+    {"Preview Complete", "Đã xem trước"},
+    {"Preview Clean", "Xem trước dọn"},
+    {"Clean %s", "Dọn %s"},
+    {"Selected to Clean", "Đã chọn để dọn"},
+    {"%llu files across %d targets", "%llu tệp trong %d mục"},
+    {"%d of %d targets selected", "Đã chọn %d / %d mục"},
+    {"Click Analyze to scan selected targets and preview reclaimable space.",
+     "Bấm Phân tích để quét các mục đã chọn và xem dung lượng có thể giải phóng."},
+    {"Open folder", "Mở thư mục"},
+    {"Cleaned", "Đã dọn"},
+    {"Previewed", "Đã xem thử"},
     {"Run Analyze before cleaning.", "Hãy chạy Phân tích trước khi dọn."},
     {"Click Clean Selected again to confirm.", "Bấm Dọn mục đã chọn lần nữa để xác nhận."},
     {"Scanning: %s", "Đang quét: %s"},
