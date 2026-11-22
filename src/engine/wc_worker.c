@@ -23,6 +23,25 @@ static bool worker_is_excluded(const char *path, void *user) {
     return wc_exclusion_matches_norm(norm, ctx->ptrs, ctx->lens, ctx->count);
 }
 
+typedef struct worker_sample_ctx {
+    wc_worker *w;
+    const char *target_id;
+} worker_sample_ctx;
+
+static void worker_sample(const char *path, uint64_t bytes, void *user) {
+    worker_sample_ctx *ctx = (worker_sample_ctx *)user;
+    if (!ctx || !ctx->w || !path || !path[0]) return;
+    wc_mutex_lock(ctx->w->mu);
+    if (ctx->w->preview_count < WC_MAX_PREVIEW) {
+        wc_preview_item *item = &ctx->w->previews[ctx->w->preview_count];
+        snprintf(item->target_id, sizeof item->target_id, "%s", ctx->target_id);
+        snprintf(item->path, sizeof item->path, "%s", path);
+        item->bytes = bytes;
+        ctx->w->preview_count++;
+    }
+    wc_mutex_unlock(ctx->w->mu);
+}
+
 static void worker_entry(void *user) {
     wc_worker *w = (wc_worker *)user;
     bool is_admin = wc_plat_is_admin();
@@ -129,11 +148,25 @@ static void worker_entry(void *user) {
                 snprintf(res.resolved_path, sizeof res.resolved_path, "%s", path);
                 if (kind == WC_JOB_ANALYZE) {
                     uint64_t files = 0, bytes = 0;
-                    if (wc_plat_scan_target(def->kind, path, &w->cancel_flag, excl_fn, excl_ctx,
-                                            &files, &bytes)) {
+                    int samples_before = 0;
+                    int remaining = 0;
+                    wc_mutex_lock(w->mu);
+                    samples_before = w->preview_count;
+                    remaining = WC_MAX_PREVIEW - samples_before;
+                    wc_mutex_unlock(w->mu);
+                    worker_sample_ctx sample_ctx = {w, def->id};
+                    if (wc_plat_scan_target_preview(def->kind, path, &w->cancel_flag, excl_fn,
+                                                    excl_ctx,
+                                                    remaining > 0 ? worker_sample : NULL,
+                                                    &sample_ctx, remaining, &files, &bytes)) {
                         res.analyzed = true;
                         res.files_found = files;
                         res.bytes_found = bytes;
+                        if (files > (uint64_t)(w->preview_count - samples_before)) {
+                            wc_mutex_lock(w->mu);
+                            w->preview_truncated = true;
+                            wc_mutex_unlock(w->mu);
+                        }
                         if (res.browser_running) {
                             snprintf(res.note, sizeof res.note, "Browser is running");
                         }
@@ -311,6 +344,9 @@ bool wc_worker_start(wc_worker *w, wc_job_kind kind, bool dry_run,
     w->job_target_count = target_count;
     w->cancel_flag = 0;
 
+    w->preview_count = 0;
+    w->preview_truncated = false;
+
     w->snap.kind = kind;
     w->snap.state = WC_JOB_RUNNING;
     w->snap.dry_run = dry_run;
@@ -339,6 +375,24 @@ bool wc_worker_start(wc_worker *w, wc_job_kind kind, bool dry_run,
 void wc_worker_cancel(wc_worker *w) {
     if (!w) return;
     w->cancel_flag = 1;
+}
+
+int wc_worker_preview_copy(wc_worker *w, wc_preview_item *out, int max) {
+    if (!w || !w->mu || !out || max <= 0) return 0;
+    wc_mutex_lock(w->mu);
+    int count = w->preview_count;
+    if (count > max) count = max;
+    if (count > 0) memcpy(out, w->previews, (size_t)count * sizeof out[0]);
+    wc_mutex_unlock(w->mu);
+    return count;
+}
+
+bool wc_worker_preview_truncated(wc_worker *w) {
+    if (!w || !w->mu) return false;
+    wc_mutex_lock(w->mu);
+    bool truncated = w->preview_truncated;
+    wc_mutex_unlock(w->mu);
+    return truncated;
 }
 
 bool wc_worker_poll(wc_worker *w, wc_worker_snapshot *out) {

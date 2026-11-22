@@ -7,13 +7,14 @@ Tiny native binary, zero telemetry, zero ads or upsells, with English and Tiến
 ## Features
 
 - **PC Health Check:** One-click summary of system drive free space, reclaimable junk, startup impact, and past clean history.
-- **Junk Cleaner (Analyze → Preview → Clean):** Safely scans and cleans temp files, Recycle Bin / Trash, thumbnail caches, crash dumps, and browser caches (Chrome, Edge, Brave, Firefox, Safari) with two-click confirmation and `--dry-run`.
+- **Junk Cleaner (Analyze → Preview → Clean):** Safely scans and cleans temp files, Recycle Bin / Trash (opt-in), thumbnail caches, crash dumps, and browser caches (Chrome, Edge, Brave, Firefox, Safari) with a sampled per-file preview, two-click confirmation, and `--dry-run`.
+- **Per-target history:** Each run records files, bytes, skips, and reasons per target; open a run from Recent History or `Ctrl+H` and copy the details.
 - **Startup Manager:** Search and toggle startup items reversibly via Windows `StartupApproved` or macOS `LaunchAgents` without deleting original entries.
 - **Installed Apps / Uninstaller:** Browse installed applications, sort by name or size, and launch official uninstallers (or reveal `.app` bundles on macOS).
 - **Disk Space Analyzer:** Read-only scanner showing top folders and largest files while skipping symlinks and junctions.
 - **Software Updater:** Checks and upgrades outdated packages via `winget` (Windows) or `brew` (macOS).
 - **Exclusions & Cookie Allowlist:** Protect specific files/folders from cleaning and keep trusted login cookies while clearing tracking cookies in Chromium/Firefox SQLite databases.
-- **Automation & System Tray:** Schedule silent `--scheduled-clean` runs via Task Scheduler / `launchctl`, plus taskbar tray notifications on Windows.
+- **Automation & System Tray:** Schedule silent `--scheduled-clean` runs via Task Scheduler / `launchctl`, plus optional in-app tray notifications while Wada Clean is open (scheduled runs do not notify).
 
 ## Build & Run
 

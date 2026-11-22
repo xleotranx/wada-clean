@@ -10,12 +10,14 @@
 #define WC_MAX_APPS 512
 #define WC_MAX_UPDATES 128
 #define WC_MAX_COOKIE_ALLOW 256
+#define WC_MAX_COOKIE_DBS 64
 #define WC_DISK_TOP_DIRS 25
 #define WC_DISK_TOP_FILES 25
 #define WC_PATH_CAP 1024
 #define WC_ID_CAP 64
 #define WC_LABEL_CAP 96
 #define WC_SUMMARY_CAP 256
+#define WC_HISTORY_DETAIL_CAP 2048
 
 typedef enum wc_category {
     WC_CAT_SYSTEM = 0,
@@ -79,6 +81,9 @@ typedef struct wc_history_entry {
     uint64_t bytes_cleaned;
     uint64_t skipped_count;
     char summary[WC_SUMMARY_CAP];
+    /* Newline-separated per-target rows:
+     * id|label|files|bytes|skipped|note. Empty for entries recorded before v2. */
+    char details[WC_HISTORY_DETAIL_CAP];
 } wc_history_entry;
 
 typedef struct wc_worker_snapshot {
@@ -181,6 +186,15 @@ typedef struct wc_cookie_allow_item {
     char id[48];
     char domain[192];
 } wc_cookie_allow_item;
+
+/* One browser profile's SQLite cookie store. */
+typedef struct wc_cookie_db {
+    char path[WC_PATH_CAP];
+    char browser[32];
+    char profile[64];
+    char process_name[40];
+    bool is_firefox;
+} wc_cookie_db;
 
 typedef enum wc_schedule_freq {
     WC_SCHED_OFF = 0,

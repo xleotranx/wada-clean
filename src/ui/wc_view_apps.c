@@ -66,25 +66,33 @@ static void refresh_app_filter(wc_cleaner_state *st) {
     }
 }
 
+static void fill_app_list(void *items, int max_items, int *out_count) {
+    wc_plat_list_apps((wc_app_item *)items, max_items, out_count);
+}
+
 void wc_apps_refresh(wc_cleaner_state *st) {
-    if (!st || !st->app_items) return;
-    st->apps_loaded = true;
-    st->app_count = 0;
-    wc_plat_list_apps(st->app_items, WC_MAX_APPS, &st->app_count);
-    st->apps_version++;
-    st->app_selected = st->app_count > 0 ? 0 : -1;
-    wada_ui_confirm_reset(&st->app_confirm);
+    if (!st || !st->app_items || st->apps_loading) return;
+    if (wc_list_job_start(&st->app_job, st->app_items, sizeof *st->app_items, WC_MAX_APPS,
+                          fill_app_list)) {
+        st->apps_loading = true;
+        st->apps_loaded = false;
+        st->app_count = 0;
+    }
 }
 
 void wc_view_apps_draw(wc_cleaner_state *st, wada_app *app) {
-    if (!st->apps_loaded) wc_apps_refresh(st);
+    if (!st->apps_loaded && !st->apps_loading) wc_apps_refresh(st);
     refresh_app_filter(st);
 
     cui_ctx *ui = wada_app_ui(app);
     wada_ui_confirm_tick(&st->app_confirm, ui, st->app_selected);
 
     char count_text[48];
-    wada_trf(count_text, sizeof count_text, "%d apps", st->filtered_app_count);
+    if (st->apps_loading) {
+        snprintf(count_text, sizeof count_text, "%s", wada_tr("Loading…"));
+    } else {
+        wada_trf(count_text, sizeof count_text, "%d apps", st->filtered_app_count);
+    }
 
     const char *sort_labels[2] = {wada_tr("Name"), wada_tr("Size")};
 
@@ -97,9 +105,8 @@ void wc_view_apps_draw(wc_cleaner_state *st, wada_app *app) {
                          .size = 12, .color = CUI_COLOR_TEXT_MUTED);
             }
             if (cui_button(ui, wada_tr("Refresh"), .variant = CUI_BUTTON_OUTLINE,
-                           .icon = CUI_ICON_REFRESH_CW)) {
+                           .icon = CUI_ICON_REFRESH_CW, .disabled = st->apps_loading)) {
                 wc_apps_refresh(st);
-                wada_app_set_status(app, wada_tr("Applications list refreshed"));
             }
         }
 
@@ -113,7 +120,14 @@ void wc_view_apps_draw(wc_cleaner_state *st, wada_app *app) {
         cui_row(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 16) {
             /* Left: virtualized app list */
             cui_column(ui, .width = CUI_GROW(1.4f), .height = CUI_FILL) {
-                if (st->filtered_app_count == 0) {
+                if (st->apps_loading) {
+                    cui_column(ui, .width = CUI_FILL, .height = CUI_FILL,
+                               .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_CENTER) {
+                        cui_progress(ui, 0.0f, .indeterminate = true, .width = CUI_PX(260),
+                                     .label = wada_tr("Loading installed apps…"),
+                                     .tone = CUI_TONE_ACCENT);
+                    }
+                } else if (st->filtered_app_count == 0) {
                     cui_empty_state(ui, wada_tr("No matching applications"),
                                     .description = wada_tr("Try clearing your search filter or refreshing."));
                 } else {
@@ -157,7 +171,12 @@ void wc_view_apps_draw(wc_cleaner_state *st, wada_app *app) {
 
             /* Right: selected app details */
             cui_card(ui, .width = CUI_PX(310), .height = CUI_FILL, .pad = 16, .gap = 10) {
-                if (st->app_selected < 0 || st->app_selected >= st->app_count) {
+                if (st->apps_loading) {
+                    cui_text(ui, wada_tr("Application Details"), .font = CUI_FONT_MEDIUM,
+                             .size = 15);
+                    cui_text(ui, wada_tr("Loading installed apps…"), .size = 12,
+                             .color = CUI_COLOR_TEXT_MUTED);
+                } else if (st->app_selected < 0 || st->app_selected >= st->app_count) {
                     cui_text(ui, wada_tr("Application Details"), .font = CUI_FONT_MEDIUM, .size = 15);
                     cui_text(ui, wada_tr("Select an application from the list to view details."),
                              .size = 12, .color = CUI_COLOR_TEXT_MUTED);
@@ -178,30 +197,30 @@ void wc_view_apps_draw(wc_cleaner_state *st, wada_app *app) {
 
                     cui_separator(ui);
 
-                    cui_text(ui, wada_tr("Publisher"), .size = 11, .color = CUI_COLOR_TEXT_MUTED);
+                    cui_text(ui, wada_tr("Publisher"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
                     cui_text(ui, sel->publisher[0] ? sel->publisher : "—", .size = 13);
 
-                    cui_text(ui, wada_tr("Version"), .size = 11, .color = CUI_COLOR_TEXT_MUTED);
+                    cui_text(ui, wada_tr("Version"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
                     cui_text(ui, sel->version[0] ? sel->version : "—", .size = 13);
 
-                    cui_text(ui, wada_tr("Install Date"), .size = 11, .color = CUI_COLOR_TEXT_MUTED);
+                    cui_text(ui, wada_tr("Install Date"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
                     cui_text(ui, sel->install_date[0] ? sel->install_date : "—", .size = 13);
 
-                    cui_text(ui, wada_tr("Estimated Size"), .size = 11, .color = CUI_COLOR_TEXT_MUTED);
+                    cui_text(ui, wada_tr("Estimated Size"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
                     cui_text(ui, size_str, .size = 13, .tabular = true);
 
                     cui_box(ui, .height = CUI_FILL) {}
 
                     if (confirming) {
-                        cui_text(ui, wada_tr("Click Uninstall again to launch uninstaller."),
-                                 .size = 11, .color = CUI_COLOR_WARNING);
+                        cui_text(ui, wada_tr("Click Confirm Uninstall to launch the uninstaller."),
+                                 .size = 12, .color = CUI_COLOR_WARNING);
                     }
                     if (cui_button(ui, wada_tr(confirming ? "Confirm Uninstall" : "Uninstall"),
                                    .variant = confirming ? CUI_BUTTON_DANGER : CUI_BUTTON_OUTLINE,
                                    .icon = CUI_ICON_TRASH_2, .width = CUI_FILL)) {
                         if (!wada_ui_confirm_step(&st->app_confirm, st->app_selected, 300)) {
                             wada_app_set_status(app,
-                                                wada_tr("Click Uninstall again to launch uninstaller."));
+                                                wada_tr("Click Confirm Uninstall to launch the uninstaller."));
                         } else if (wc_plat_launch_uninstaller(sel->uninstall_cmd)) {
                             wada_app_set_status(app, wada_tr("Uninstaller launched"));
                         } else {

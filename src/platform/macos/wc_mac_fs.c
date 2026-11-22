@@ -265,6 +265,19 @@ bool wc_plat_scan_target(wc_target_kind kind, const char *root, const volatile i
     return ok;
 }
 
+/* The macOS walker does not hand out sample paths yet; the preview panel shows
+ * an explanatory empty state on macOS instead of pretending to list files. */
+bool wc_plat_scan_target_preview(wc_target_kind kind, const char *root,
+                                 const volatile int *cancel_flag, wc_exclude_fn is_excluded,
+                                 void *excl_user, wc_sample_fn on_sample, void *sample_user,
+                                 int max_samples, uint64_t *out_files, uint64_t *out_bytes) {
+    (void)on_sample;
+    (void)sample_user;
+    (void)max_samples;
+    return wc_plat_scan_target(kind, root, cancel_flag, is_excluded, excl_user, out_files,
+                               out_bytes);
+}
+
 bool wc_plat_clean_target(wc_target_kind kind, const char *root, bool dry_run,
                           const volatile int *cancel_flag, wc_exclude_fn is_excluded,
                           void *excl_user, uint64_t *out_files, uint64_t *out_bytes,
@@ -472,4 +485,12 @@ bool wc_plat_open_in_explorer(const char *path, bool select_item) {
     int status = 0;
     if (waitpid(pid, &status, 0) < 0) return false;
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+/* No portable C folder picker on macOS yet; the Exclusions view only offers
+ * Browse on Windows and falls back to typing a path here. */
+bool wc_plat_pick_folder(char *out, size_t cap) {
+    (void)cap;
+    if (out) out[0] = '\0';
+    return false;
 }

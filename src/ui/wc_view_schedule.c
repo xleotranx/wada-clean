@@ -81,7 +81,7 @@ void wc_view_schedule_draw(wc_cleaner_state *st, wada_app *app) {
         cui_card(ui, .width = CUI_FILL, .pad = 16, .gap = 10) {
             cui_text(ui, wada_tr("System Tray"), .font = CUI_FONT_MEDIUM, .size = 15);
             cui_text(ui,
-                     wada_tr("Show a Wada Clean notification icon in the Windows taskbar tray."),
+                     wada_tr("Show the Wada Clean icon while the app is open. It is removed when Wada Clean closes."),
                      .size = 12, .color = CUI_COLOR_TEXT_MUTED);
 
             bool next_tray = st->tray_enabled;

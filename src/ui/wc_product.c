@@ -81,9 +81,19 @@ void wc_health_run_checkup(wc_cleaner_state *st) {
     wc_cleaner_start_analyze(st);
 }
 
-void wc_cleaner_start_analyze(wc_cleaner_state *st) {
-    if (!st || st->running) return;
+const wc_history_entry *wc_last_clean_run(const wc_cleaner_state *st) {
+    if (!st) return NULL;
+    for (int i = 0; i < st->history_count; i++) {
+        if (!st->history_entries[i].dry_run) return &st->history_entries[i];
+    }
+    return NULL;
+}
+
+void wc_cleaner_start_analyze(wc_cleaner_state *st) {    if (!st || st->running) return;
     wada_ui_confirm_reset(&st->confirm);
+    st->preview_open = false;
+    st->preview_ui_count = 0;
+    st->history_open = false;
     if (wc_worker_start(&st->worker, WC_JOB_ANALYZE, false, st->defs, st->selected,
                         st->target_count)) {
         st->running = true;
@@ -98,10 +108,13 @@ void wc_cleaner_start_clean(wc_cleaner_state *st) {
         return;
     }
     if (!st->dry_run && !wada_ui_confirm_step(&st->confirm, 0, 300)) {
-        wada_app_set_status(st->app, wada_tr("Click Clean Selected again to confirm."));
+        wada_app_set_status(st->app, wada_tr("Click Confirm Clean to confirm."));
         return;
     }
     wada_ui_confirm_reset(&st->confirm);
+    st->preview_open = false;
+    st->preview_ui_count = 0;
+    st->history_open = false;
     if (wc_worker_start(&st->worker, WC_JOB_CLEAN, st->dry_run, st->defs, st->selected,
                         st->target_count)) {
         st->running = true;
@@ -135,7 +148,38 @@ void wc_cleaner_select_category(wc_cleaner_state *st, wc_category cat, bool sele
 static void cmd_analyze(void *user) {
     wc_cleaner_state *st = (wc_cleaner_state *)user;
     st->active_view = WC_VIEW_CLEANER;
+    st->preview_open = false;
+    st->history_open = false;
     wc_cleaner_start_analyze(st);
+}
+
+static void cmd_preview_files(void *user) {
+    wc_cleaner_state *st = (wc_cleaner_state *)user;
+    st->active_view = WC_VIEW_CLEANER;
+    st->history_open = false;
+    if (st->has_analyzed && st->preview_ui_count > 0) st->preview_open = true;
+}
+
+static void cmd_view_history(void *user) {
+    wc_cleaner_state *st = (wc_cleaner_state *)user;
+    st->active_view = WC_VIEW_CLEANER;
+    st->preview_open = false;
+    if (st->history_count > 0) {
+        st->history_selected = 0;
+        st->history_open = true;
+    }
+}
+
+static void cmd_about(void *user) {
+    ((wc_cleaner_state *)user)->about_open = true;
+}
+
+static void draw_shortcut_row(cui_ctx *ui, const char *label, const char *keys) {
+    cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_BETWEEN,
+            .gap = 12) {
+        cui_text(ui, label, .size = 13);
+        cui_kbd(ui, keys);
+    }
 }
 
 static void cmd_select_all(void *user) {
@@ -151,7 +195,10 @@ static void cmd_view_health(void *user) {
 }
 
 static void cmd_view_cleaner(void *user) {
-    ((wc_cleaner_state *)user)->active_view = WC_VIEW_CLEANER;
+    wc_cleaner_state *st = (wc_cleaner_state *)user;
+    st->active_view = WC_VIEW_CLEANER;
+    st->preview_open = false;
+    st->history_open = false;
 }
 
 static void cmd_view_startup(void *user) {
@@ -198,6 +245,20 @@ static void record_clean_history(wc_cleaner_state *st) {
     entry.skipped_count = st->snap.total_skipped;
     snprintf(entry.summary, sizeof entry.summary, "%s (%d targets)", size_buf, ran_targets);
 
+    for (int i = 0; i < st->snap.target_count && i < st->target_count; i++) {
+        const wc_target_result *res = &st->snap.results[i];
+        if (!res->selected || !res->id[0]) continue;
+        const char *label = res->id;
+        for (int d = 0; d < st->target_count; d++) {
+            if (strcmp(st->defs[d].id, res->id) == 0) {
+                label = st->defs[d].label;
+                break;
+            }
+        }
+        wc_history_append_detail(&entry, res->id, label, res->files_cleaned,
+                                 res->bytes_cleaned, res->skipped_count, res->note);
+    }
+
     wada_err err;
     wada_err_clear(&err);
     if (wc_history_append(&st->history, &entry, &err) == WADA_OK) {
@@ -214,6 +275,7 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
         return NULL;
     }
     st->app = app;
+    snprintf(st->data_dir, sizeof st->data_dir, "%s", data_dir ? data_dir : "");
     st->active_view = WC_VIEW_HEALTH;
     st->is_admin = wc_plat_is_admin();
     st->dry_run = g_initial_dry_run;
@@ -222,8 +284,10 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     st->apps_last_version = -1;
     st->sched_hour = 3.0;
     st->updater_snap.winget_available = true;
+    st->cookie_dry_run = true;
     wada_ui_confirm_init(&st->confirm);
     wada_ui_confirm_init(&st->app_confirm);
+    wada_ui_confirm_init(&st->cookie_confirm);
 
     st->sys_drive_ok =
         wc_plat_disk_free_space(WC_SYS_DRIVE, &st->sys_drive_free, &st->sys_drive_total);
@@ -239,7 +303,12 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     }
 
     if (!wc_worker_init(&st->worker) || !wc_disk_worker_init(&st->disk_worker) ||
-        !wc_updater_worker_init(&st->updater_worker)) {
+        !wc_updater_worker_init(&st->updater_worker) ||
+        !wc_cookie_job_init(&st->cookie_job) || !wc_list_job_init(&st->startup_job) ||
+        !wc_list_job_init(&st->app_job)) {
+        wc_list_job_destroy(&st->app_job);
+        wc_list_job_destroy(&st->startup_job);
+        wc_cookie_job_destroy(&st->cookie_job);
         wc_updater_worker_destroy(&st->updater_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
@@ -271,6 +340,9 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
 
     const wada_store_ops *ops = wada_ui_store_ops(app, "cleaner", err);
     if (!ops) {
+        wc_list_job_destroy(&st->app_job);
+        wc_list_job_destroy(&st->startup_job);
+        wc_cookie_job_destroy(&st->cookie_job);
         wc_updater_worker_destroy(&st->updater_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
@@ -288,6 +360,9 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
         wc_cookies_close(&st->cookies);
         wc_exclusions_close(&st->exclusions);
         wc_history_close(&st->history);
+        wc_list_job_destroy(&st->app_job);
+        wc_list_job_destroy(&st->startup_job);
+        wc_cookie_job_destroy(&st->cookie_job);
         wc_updater_worker_destroy(&st->updater_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
@@ -302,13 +377,16 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
 
     wada_app_command(app, scope, "cleaner.view_health", "Open PC Health Check", "Ctrl 1", cmd_view_health, st);
     wada_app_command(app, scope, "cleaner.view_cleaner", "Open Junk Cleaner", "Ctrl 2", cmd_view_cleaner, st);
-    wada_app_command(app, scope, "cleaner.view_startup", "Open Startup Manager", "Ctrl 3", cmd_view_startup, st);
-    wada_app_command(app, scope, "cleaner.view_apps", "Open Installed Apps", "Ctrl 4", cmd_view_apps, st);
-    wada_app_command(app, scope, "cleaner.view_disk", "Open Disk Space Analyzer", "Ctrl 5", cmd_view_disk, st);
+    wada_app_command(app, scope, "cleaner.view_disk", "Open Disk Space Analyzer", "Ctrl 3", cmd_view_disk, st);
+    wada_app_command(app, scope, "cleaner.view_startup", "Open Startup Manager", "Ctrl 4", cmd_view_startup, st);
+    wada_app_command(app, scope, "cleaner.view_apps", "Open Installed Apps", "Ctrl 5", cmd_view_apps, st);
     wada_app_command(app, scope, "cleaner.view_updater", "Open Software Updater", "Ctrl 6", cmd_view_updater, st);
     wada_app_command(app, scope, "cleaner.view_exclusions", "Open Exclusions", "Ctrl 7", cmd_view_exclusions, st);
     wada_app_command(app, scope, "cleaner.view_automation", "Open Automation & Tray", "Ctrl 8", cmd_view_automation, st);
     wada_app_command(app, scope, "cleaner.analyze", "Analyze all junk targets", "Ctrl R", cmd_analyze, st);
+    wada_app_command(app, scope, "cleaner.preview_files", "Preview sampled files", "Ctrl P", cmd_preview_files, st);
+    wada_app_command(app, scope, "cleaner.view_history", "View latest clean run", "Ctrl H", cmd_view_history, st);
+    wada_app_command(app, scope, "app.about", "About & shortcuts", "Ctrl /", cmd_about, st);
     wada_app_command(app, scope, "cleaner.select_all", "Select all cleaner targets", NULL, cmd_select_all, st);
     wada_app_command(app, scope, "cleaner.select_none", "Deselect all cleaner targets", NULL, cmd_select_none, st);
     return st;
@@ -318,6 +396,9 @@ static void wc_cleaner_leave(void *state) {
     wc_cleaner_state *st = (wc_cleaner_state *)state;
     if (!st) return;
     wc_plat_tray_hide();
+    wc_list_job_destroy(&st->app_job);
+    wc_list_job_destroy(&st->startup_job);
+    wc_cookie_job_destroy(&st->cookie_job);
     wc_updater_worker_destroy(&st->updater_worker);
     wc_disk_worker_destroy(&st->disk_worker);
     wc_worker_destroy(&st->worker);
@@ -341,6 +422,9 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
         if (st->snap.state == WC_JOB_DONE) {
             if (st->snap.kind == WC_JOB_ANALYZE) {
                 st->has_analyzed = true;
+                st->preview_ui_count =
+                    wc_worker_preview_copy(&st->worker, st->preview_items, WC_MAX_PREVIEW);
+                st->preview_ui_truncated = wc_worker_preview_truncated(&st->worker);
                 wada_app_set_status(app, wada_tr("Analysis complete"));
             } else if (st->snap.kind == WC_JOB_CLEAN) {
                 record_clean_history(st);
@@ -398,20 +482,53 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
         st->updater_running = true;
     }
 
-    if (st->running || st->disk_running || st->updater_running) {
+    /* Poll browser cookie cleanup job */
+    bool cookie_now = wc_cookie_job_poll(&st->cookie_job, &st->cookie_snap);
+    if (st->cookie_job_running && !cookie_now) {
+        st->cookie_job_running = false;
+        if (st->cookie_snap.state == WC_JOB_DONE) {
+            wada_app_set_status(
+                app, wada_tr(st->cookie_snap.dry_run ? "Cookie preview complete"
+                                                     : "Cookie cleanup complete"));
+        } else if (st->cookie_snap.state == WC_JOB_CANCELLED) {
+            wada_app_set_status(app, wada_tr("Cookie cleanup cancelled"));
+        }
+        wada_ui_confirm_reset(&st->cookie_confirm);
+    } else if (cookie_now) {
+        st->cookie_job_running = true;
+    }
+
+    int listed = 0;
+    if (st->startup_loading && wc_list_job_poll(&st->startup_job, &listed)) {
+        st->startup_loading = false;
+        st->startup_loaded = true;
+        st->startup_count = listed;
+    }
+    if (st->apps_loading && wc_list_job_poll(&st->app_job, &listed)) {
+        st->apps_loading = false;
+        st->apps_loaded = true;
+        st->app_count = listed;
+        st->apps_version++;
+        st->app_selected = listed > 0 ? 0 : -1;
+        wada_ui_confirm_reset(&st->app_confirm);
+    }
+
+    if (st->running || st->disk_running || st->updater_running || cookie_now ||
+        st->startup_loading || st->apps_loading) {
         cui_request_wakeup(ui, 0.05f);
     }
 
     wada_ui_confirm_tick(&st->confirm, ui, 0);
+    wada_ui_confirm_tick(&st->cookie_confirm, ui, 0);
 
     cui_row(ui, .width = CUI_FILL, .height = CUI_FILL) {
         /* Left navigation sidebar */
         cui_column(ui, .width = CUI_PX(196), .height = CUI_FILL,
                    .bg = CUI_COLOR_SURFACE_MUTED, .pad = 12, .gap = 4) {
             cui_text(ui, wada_tr("Wada Clean"), .font = CUI_FONT_DISPLAY, .size = 18);
-            cui_text(ui, wada_tr("System Utility"), .size = 11, .color = CUI_COLOR_TEXT_MUTED);
+            cui_text(ui, wada_tr("System Utility"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
 
-            cui_nav_section(ui, wada_tr("Tools"));
+            cui_nav_section(ui, wada_tr("Cleanup"));
             if (cui_nav_item(ui, wada_tr("Health Check"), .icon = CUI_ICON_SHIELD,
                              .selected = st->active_view == WC_VIEW_HEALTH,
                              .group = "wc-nav")) {
@@ -422,6 +539,13 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
                              .group = "wc-nav")) {
                 st->active_view = WC_VIEW_CLEANER;
             }
+            if (cui_nav_item(ui, wada_tr("Disk Analyzer"), .icon = CUI_ICON_FOLDER_OPEN,
+                             .selected = st->active_view == WC_VIEW_DISK,
+                             .group = "wc-nav")) {
+                st->active_view = WC_VIEW_DISK;
+            }
+
+            cui_nav_section(ui, wada_tr("Manage"));
             if (cui_nav_item(ui, wada_tr("Startup"), .icon = CUI_ICON_ROCKET,
                              .selected = st->active_view == WC_VIEW_STARTUP,
                              .group = "wc-nav")) {
@@ -432,16 +556,13 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
                              .group = "wc-nav")) {
                 st->active_view = WC_VIEW_APPS;
             }
-            if (cui_nav_item(ui, wada_tr("Disk Analyzer"), .icon = CUI_ICON_FOLDER_OPEN,
-                             .selected = st->active_view == WC_VIEW_DISK,
-                             .group = "wc-nav")) {
-                st->active_view = WC_VIEW_DISK;
-            }
             if (cui_nav_item(ui, wada_tr("Updater"), .icon = CUI_ICON_DOWNLOAD,
                              .selected = st->active_view == WC_VIEW_UPDATER,
                              .group = "wc-nav")) {
                 st->active_view = WC_VIEW_UPDATER;
             }
+
+            cui_nav_section(ui, wada_tr("Settings"));
             if (cui_nav_item(ui, wada_tr("Exclusions"), .icon = CUI_ICON_LOCK,
                              .selected = st->active_view == WC_VIEW_EXCLUSIONS,
                              .group = "wc-nav")) {
@@ -455,6 +576,10 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
 
             cui_box(ui, .height = CUI_FILL) {}
 
+            if (cui_button(ui, wada_tr("About & shortcuts"), .variant = CUI_BUTTON_GHOST,
+                           .size = CUI_SIZE_SM, .icon = CUI_ICON_INFO, .full_width = true)) {
+                st->about_open = true;
+            }
             if (!st->is_admin) {
                 if (cui_button(ui, wada_tr("Restart as Admin"), .variant = CUI_BUTTON_OUTLINE,
                                .size = CUI_SIZE_SM, .icon = CUI_ICON_SHIELD, .full_width = true)) {
@@ -463,6 +588,8 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
             }
             cui_badge(ui, wada_tr(st->is_admin ? "Administrator" : "Standard User"),
                       .tone = st->is_admin ? CUI_TONE_SUCCESS : CUI_TONE_NEUTRAL);
+            cui_text(ui, wada_tr("Ctrl K  Commands"), .size = 12,
+                     .color = CUI_COLOR_TEXT_MUTED);
         }
 
         cui_separator(ui);
@@ -497,13 +624,47 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
             }
         }
     }
+
+    if (st->about_open) {
+        cui_dialog(ui, wada_tr("About & shortcuts"), &st->about_open, .width = 560,
+                   .description = wada_tr("Keyboard shortcuts and app information.")) {
+            cui_text(ui, "Wada Clean " WC_APP_VERSION, .font = CUI_FONT_DISPLAY, .size = 20);
+            cui_text(ui, wada_tr("Native Windows cleaner built with wada-c. MIT licensed."),
+                     .size = 12, .color = CUI_COLOR_TEXT_MUTED);
+            if (st->data_dir[0]) {
+                cui_text(ui, st->data_dir, .font = CUI_FONT_MONO, .size = 12,
+                         .color = CUI_COLOR_TEXT_MUTED, .nowrap = true);
+            }
+            cui_separator(ui);
+            cui_text(ui, wada_tr("Keyboard shortcuts"), .font = CUI_FONT_MEDIUM, .size = 14);
+            draw_shortcut_row(ui, wada_tr("Command palette"), "Ctrl K");
+            draw_shortcut_row(ui, wada_tr("Switch section"), "Ctrl 1-8");
+            draw_shortcut_row(ui, wada_tr("Analyze junk"), "Ctrl R");
+            draw_shortcut_row(ui, wada_tr("Preview files"), "Ctrl P");
+            draw_shortcut_row(ui, wada_tr("Latest clean run"), "Ctrl H");
+            draw_shortcut_row(ui, wada_tr("About & shortcuts"), "Ctrl /");
+            draw_shortcut_row(ui, wada_tr("Toggle theme"), "Ctrl T");
+            cui_dialog_footer(ui) {
+                if (cui_button(ui, wada_tr("Open data folder"),
+                               .variant = CUI_BUTTON_OUTLINE)) {
+                    if (st->data_dir[0]) wc_plat_open_in_explorer(st->data_dir, false);
+                }
+                if (cui_button(ui, wada_tr("Close"), .variant = CUI_BUTTON_PRIMARY,
+                               .width = CUI_PX(110))) {
+                    st->about_open = false;
+                }
+            }
+        }
+    }
 }
 
 static const wada_i18n_pair wc_cleaner_strings[] = {
     /* Shell & navigation */
     {"Wada Clean", "Wada Clean"},
     {"System Utility", "Tiện ích hệ thống"},
-    {"Tools", "Công cụ"},
+    {"Cleanup", "Dọn dẹp"},
+    {"Manage", "Quản lý"},
+    {"Settings", "Cài đặt"},
     {"Health Check", "Sức khỏe PC"},
     {"Cleaner", "Dọn rác"},
     {"Startup", "Khởi động"},
@@ -532,6 +693,7 @@ static const wada_i18n_pair wc_cleaner_strings[] = {
     {"One-click overview of disk space, reclaimable junk, startup impact, and clean history.",
      "Tổng quan một chạm về dung lượng ổ đĩa, rác có thể dọn, khởi động và lịch sử dọn."},
     {"System Ready", "Hệ thống sẵn sàng"},
+    {"Not checked yet", "Chưa kiểm tra"},
     {"Attention Suggested", "Nên kiểm tra"},
     {"Analyzing System…", "Đang phân tích hệ thống…"},
     {"Click Run Health Check to scan junk targets and startup impact.",
@@ -571,6 +733,7 @@ static const wada_i18n_pair wc_cleaner_strings[] = {
     {"Analyze first, preview exact sizes, and safely clean system & browser junk.",
      "Phân tích trước, xem dung lượng chính xác và dọn rác hệ thống & trình duyệt an toàn."},
     {"Dry run (preview only)", "Chạy thử (chỉ xem trước)"},
+    {"Preview only", "Chỉ xem trước"},
     {"Analyze", "Phân tích"},
     {"Clean Selected", "Dọn mục đã chọn"},
     {"Confirm Clean", "Xác nhận dọn"},
@@ -595,7 +758,7 @@ static const wada_i18n_pair wc_cleaner_strings[] = {
     {"Cleaned", "Đã dọn"},
     {"Previewed", "Đã xem thử"},
     {"Run Analyze before cleaning.", "Hãy chạy Phân tích trước khi dọn."},
-    {"Click Clean Selected again to confirm.", "Bấm Dọn mục đã chọn lần nữa để xác nhận."},
+    {"Click Confirm Clean to confirm.", "Bấm Xác nhận dọn để tiếp tục."},
     {"Scanning: %s", "Đang quét: %s"},
     {"Cleaning: %s", "Đang dọn: %s"},
     {"Previewing: %s", "Đang xem trước: %s"},
@@ -610,6 +773,7 @@ static const wada_i18n_pair wc_cleaner_strings[] = {
     {"Reclaimable", "Có thể giải phóng"},
     {"Files Found", "Tệp tìm thấy"},
     {"Last Freed", "Đã giải phóng"},
+    {"Last Skipped", "Bỏ qua (lần trước)"},
     {"Skipped", "Đã bỏ qua"},
     {"Dry-run preview mode is enabled. No files will be deleted.",
      "Chế độ chạy thử đang bật. Không có tệp nào bị xóa."},
@@ -629,6 +793,8 @@ static const wada_i18n_pair wc_cleaner_strings[] = {
     {"Dry-run preview complete", "Xem trước hoàn tất"},
     {"Job cancelled", "Đã hủy tác vụ"},
     {"User Temp Files", "Tệp tạm người dùng"},
+    {"Emptied permanently — this cannot be undone.",
+     "Bị xóa vĩnh viễn — không thể hoàn tác."},
     {"Recycle Bin", "Thùng rác"},
     {"Thumbnail Cache", "Bộ nhớ đệm hình thu nhỏ"},
     {"Crash Dumps", "Bản ghi lỗi hệ thống"},
@@ -690,7 +856,8 @@ static const wada_i18n_pair wc_cleaner_strings[] = {
     {"Version", "Phiên bản"},
     {"Install Date", "Ngày cài đặt"},
     {"Estimated Size", "Dung lượng ước tính"},
-    {"Click Uninstall again to launch uninstaller.", "Bấm Gỡ cài đặt lần nữa để chạy trình gỡ."},
+    {"Click Confirm Uninstall to launch the uninstaller.",
+     "Bấm Xác nhận gỡ cài đặt để chạy trình gỡ."},
     {"Confirm Uninstall", "Xác nhận gỡ cài đặt"},
     {"Uninstall", "Gỡ cài đặt"},
     {"Uninstaller launched", "Đã mở trình gỡ cài đặt"},
@@ -760,6 +927,7 @@ static const wada_i18n_pair wc_cleaner_strings[] = {
     {"Folder or file path to exclude (e.g. C:\\Users\\...)",
      "Đường dẫn thư mục hoặc tệp cần loại trừ (vd: C:\\Users\\...)"},
     {"Add", "Thêm"},
+    {"Browse…", "Chọn thư mục…"},
     {"No exclusions configured", "Chưa có đường dẫn loại trừ nào"},
     {"Add a file or folder path above to keep Junk Cleaner from touching it.",
      "Thêm đường dẫn tệp hoặc thư mục ở trên để Dọn rác không đụng vào."},
@@ -812,6 +980,79 @@ static const wada_i18n_pair wc_cleaner_strings[] = {
     {"Tray icon hidden", "Đã ẩn biểu tượng khay"},
     {"Send Test Notification", "Gửi thông báo thử"},
     {"System tray notifications are working.", "Thông báo khay hệ thống đang hoạt động."},
+
+    /* Second UI pass additions */
+    {"Ctrl K  Commands", "Ctrl K  Lệnh"},
+    {"Covers every Chrome, Edge and Brave profile, plus Firefox. Close a browser to include it.",
+     "Áp dụng cho mọi hồ sơ Chrome, Edge, Brave và Firefox. Đóng trình duyệt để tính cả."},
+    {"No allowlisted domains: cleaning signs you out of every site.",
+     "Chưa có tên miền tin cậy: dọn cookie sẽ đăng xuất khỏi mọi trang."},
+    {"Confirm Cookie Clean", "Xác nhận dọn cookie"},
+    {"Click Confirm Cookie Clean to continue.", "Bấm Xác nhận dọn cookie để tiếp tục."},
+    {"Cookie cleanup cancelled", "Đã hủy dọn cookie"},
+    {"Could not start cookie cleanup", "Không thể bắt đầu dọn cookie"},
+    {"Previewing cookie stores…", "Đang xem trước cookie…"},
+    {"Cleaning cookie stores…", "Đang dọn cookie…"},
+    {"Checking %s (%d/%d)", "Đang kiểm tra %s (%d/%d)"},
+    {"Finding cookie stores…", "Đang tìm kho cookie…"},
+    {"Preview: %llu cookies would be removed, %llu kept. Skipped: %d browser(s), errors: %d.",
+     "Xem trước: sẽ xóa %llu cookie, giữ %llu. Bỏ qua: %d trình duyệt, lỗi: %d."},
+    {"Removed %llu cookies, kept %llu. Skipped: %d browser(s), errors: %d.",
+     "Đã xóa %llu cookie, giữ %llu. Bỏ qua: %d trình duyệt, lỗi: %d."},
+    {"No browser cookie stores were found.", "Không tìm thấy kho cookie trình duyệt nào."},
+    {"Show the Wada Clean icon while the app is open. It is removed when Wada Clean closes.",
+     "Hiện biểu tượng Wada Clean khi ứng dụng đang mở. Biểu tượng sẽ mất khi đóng ứng dụng."},
+    {"Loading…", "Đang tải…"},
+    {"Loading startup items…", "Đang tải mục khởi động…"},
+    {"Loading installed apps…", "Đang tải ứng dụng đã cài…"},
+
+    /* Per-file preview */
+    {"Preview files", "Xem trước tệp"},
+    {"Back", "Quay lại"},
+    {"Preview sampled files", "Xem tệp mẫu"},
+    {"%d files sampled from %d targets", "%d tệp từ %d mục"},
+    {"Sampled from the last analysis. Up to %d files are listed.",
+     "Lấy mẫu từ lần phân tích gần nhất. Tối đa %d tệp."},
+    {"No files were sampled. Run Analyze again.",
+     "Chưa lấy được tệp mẫu. Hãy chạy Phân tích lại."},
+    {"Showing a sample of %d files. The Cleaner summary has the exact totals.",
+     "Đang hiện mẫu %d tệp. Tổng quan ở Dọn rác có số liệu chính xác."},
+    {"Recycle Bin contents cannot be listed; it is emptied entirely.",
+     "Không thể liệt kê Thùng rác; thùng sẽ bị làm trống toàn bộ."},
+    {"What will be removed", "Nội dung sẽ bị xóa"},
+    {"Locked or in-use files are skipped when cleaning.",
+     "Tệp đang bị khóa hoặc đang dùng sẽ bị bỏ qua khi dọn."},
+    {"Analysis samples files from each selected target.",
+     "Phân tích lấy mẫu tệp từ từng mục đã chọn."},
+
+    /* History detail */
+    {"View", "Xem"},
+    {"Clean run", "Lần dọn"},
+    {"Freed", "Đã giải phóng"},
+    {"Targets", "Mục"},
+    {"Copy details", "Sao chép chi tiết"},
+    {"Per-target results", "Kết quả từng mục"},
+    {"%s · %llu files · %llu skipped", "%s · %llu tệp · %llu bỏ qua"},
+    {"This run predates detailed history; only totals are available.",
+     "Lần dọn này chưa có chi tiết; chỉ có số liệu tổng."},
+    {"View latest clean run", "Xem lần dọn gần nhất"},
+    {"Preview run", "Lần xem trước"},
+    {"Preview: %s across %llu files.", "Xem trước: %s với %llu tệp."},
+    {"Freed %s across %llu files.", "Đã giải phóng %s với %llu tệp."},
+
+    /* About & shortcuts */
+    {"About & shortcuts", "Giới thiệu & phím tắt"},
+    {"Keyboard shortcuts and app information.", "Phím tắt và thông tin ứng dụng."},
+    {"Native Windows cleaner built with wada-c. MIT licensed.",
+     "Trình dọn Windows gốc, xây dựng bằng wada-c. Giấy phép MIT."},
+    {"Keyboard shortcuts", "Phím tắt"},
+    {"Command palette", "Bảng lệnh"},
+    {"Switch section", "Chuyển mục"},
+    {"Analyze junk", "Phân tích rác"},
+    {"Latest clean run", "Lần dọn gần nhất"},
+    {"Toggle theme", "Đổi giao diện"},
+    {"Open data folder", "Mở thư mục dữ liệu"},
+    {"Close", "Đóng"},
 };
 
 static const char *const wc_cleaner_walk[] = {

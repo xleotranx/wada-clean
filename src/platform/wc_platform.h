@@ -13,6 +13,7 @@ typedef void (*wc_thread_fn)(void *user);
 typedef void (*wc_disk_progress_fn)(const char *current_dir, uint64_t files, uint64_t bytes,
                                     void *user);
 typedef bool (*wc_exclude_fn)(const char *path, void *user);
+typedef void (*wc_sample_fn)(const char *path, uint64_t bytes, void *user);
 
 /* Environment & privilege helpers */
 bool wc_plat_get_env(const char *name, char *out, size_t cap);
@@ -44,6 +45,13 @@ bool wc_plat_scan_target(wc_target_kind kind, const char *root,
                          const volatile int *cancel_flag,
                          wc_exclude_fn is_excluded, void *excl_user,
                          uint64_t *out_files, uint64_t *out_bytes);
+/* Same scan, but also hands up to `max_samples` regular file paths (with sizes)
+ * to `on_sample`, in walk order. Totals always include every file. */
+bool wc_plat_scan_target_preview(wc_target_kind kind, const char *root,
+                                 const volatile int *cancel_flag,
+                                 wc_exclude_fn is_excluded, void *excl_user,
+                                 wc_sample_fn on_sample, void *sample_user, int max_samples,
+                                 uint64_t *out_files, uint64_t *out_bytes);
 bool wc_plat_clean_target(wc_target_kind kind, const char *root, bool dry_run,
                           const volatile int *cancel_flag,
                           wc_exclude_fn is_excluded, void *excl_user,
@@ -71,6 +79,9 @@ bool wc_plat_analyze_disk(const char *root, const volatile int *cancel_flag,
                           wc_disk_progress_fn on_progress, void *user, wc_disk_snapshot *out);
 bool wc_plat_disk_free_space(const char *path, uint64_t *out_free_bytes, uint64_t *out_total_bytes);
 bool wc_plat_open_in_explorer(const char *path, bool select_item);
+/* Native folder picker. Returns false when cancelled or unsupported on this
+ * platform; `out` is always NUL-terminated. */
+bool wc_plat_pick_folder(char *out, size_t cap);
 
 /* Software updater (winget) */
 bool wc_plat_winget_available(void);
@@ -83,6 +94,9 @@ bool wc_plat_winget_upgrade(const char *package_id, const volatile int *cancel_f
 bool wc_plat_prune_cookie_db(const char *db_path, bool is_firefox, const char *const *allowlist,
                              int allow_count, bool dry_run, uint64_t *out_removed,
                              uint64_t *out_kept);
+/* Enumerates every browser profile that has a SQLite cookie store.
+ * Returns the number written (at most max_items); 0 when none are found. */
+int wc_plat_list_cookie_dbs(wc_cookie_db *out, int max_items);
 
 /* Scheduled cleaning & system tray */
 bool wc_plat_schedule_query(wc_schedule_info *out);

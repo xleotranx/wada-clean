@@ -7,6 +7,13 @@
 #include "wada_app.h"
 #include "wada_i18n.h"
 
+static void start_update_check(wc_cleaner_state *st, wada_app *app) {
+    if (wc_updater_worker_start_check(&st->updater_worker)) {
+        st->updater_running = true;
+        wada_app_set_status(app, wada_tr("Checking for updates…"));
+    }
+}
+
 void wc_view_updater_draw(wc_cleaner_state *st, wada_app *app) {
     cui_ctx *ui = wada_app_ui(app);
     const wc_updater_snapshot *snap = &st->updater_snap;
@@ -29,32 +36,36 @@ void wc_view_updater_draw(wc_cleaner_state *st, wada_app *app) {
             }
         }
 
-        cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .gap = 8) {
-            if (cui_button(ui, wada_tr("Check for Updates"), .variant = CUI_BUTTON_PRIMARY,
-                           .icon = CUI_ICON_REFRESH_CW, .disabled = st->updater_running,
-                           .loading = st->updater_running && snap->op == WC_UPD_CHECK)) {
-                if (wc_updater_worker_start_check(&st->updater_worker)) {
-                    st->updater_running = true;
-                    wada_app_set_status(app, wada_tr("Checking for updates…"));
-                }
-            }
-
-            if (snap->count > 0) {
-                if (cui_button(ui, wada_tr("Update All"), .variant = CUI_BUTTON_OUTLINE,
-                               .icon = CUI_ICON_DOWNLOAD, .disabled = st->updater_running,
-                               .loading = st->updater_running &&
-                                          snap->op == WC_UPD_UPGRADE_ALL)) {
-                    if (wc_updater_worker_start_upgrade_all(&st->updater_worker)) {
-                        st->updater_running = true;
-                        wada_app_set_status(app, wada_tr("Updating all packages…"));
+        /* While idle the empty state owns the primary action, so the toolbar
+         * only appears once there is something to re-check or update. */
+        bool show_check = snap->winget_available && (st->updater_running || snap->state != WC_JOB_IDLE);
+        if (show_check || snap->count > 0) {
+            cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .gap = 8) {
+                if (show_check) {
+                    if (cui_button(ui, wada_tr("Check for Updates"), .variant = CUI_BUTTON_OUTLINE,
+                                   .icon = CUI_ICON_REFRESH_CW, .disabled = st->updater_running,
+                                   .loading = st->updater_running && snap->op == WC_UPD_CHECK)) {
+                        start_update_check(st, app);
                     }
                 }
-            }
 
-            if (st->updater_running) {
-                if (cui_button(ui, wada_tr("Cancel"), .variant = CUI_BUTTON_GHOST,
-                               .icon = CUI_ICON_X)) {
-                    wc_updater_worker_cancel(&st->updater_worker);
+                if (snap->count > 0) {
+                    if (cui_button(ui, wada_tr("Update All"), .variant = CUI_BUTTON_PRIMARY,
+                                   .icon = CUI_ICON_DOWNLOAD, .disabled = st->updater_running,
+                                   .loading = st->updater_running &&
+                                              snap->op == WC_UPD_UPGRADE_ALL)) {
+                        if (wc_updater_worker_start_upgrade_all(&st->updater_worker)) {
+                            st->updater_running = true;
+                            wada_app_set_status(app, wada_tr("Updating all packages…"));
+                        }
+                    }
+                }
+
+                if (st->updater_running) {
+                    if (cui_button(ui, wada_tr("Cancel"), .variant = CUI_BUTTON_GHOST,
+                                   .icon = CUI_ICON_X)) {
+                        wc_updater_worker_cancel(&st->updater_worker);
+                    }
                 }
             }
         }
@@ -73,8 +84,20 @@ void wc_view_updater_draw(wc_cleaner_state *st, wada_app *app) {
         } else if (snap->error_msg[0] && snap->state == WC_JOB_ERROR) {
             cui_alert(ui, snap->error_msg, .tone = CUI_TONE_DANGER, .icon = CUI_ICON_CIRCLE_ALERT);
         } else if (snap->state == WC_JOB_IDLE) {
-            cui_empty_state(ui, wada_tr("Check for app updates"),
-                            .description = wada_tr("Click Check for Updates to scan installed packages with winget."));
+            cui_column(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER,
+                       .justify = CUI_JUSTIFY_CENTER, .gap = 10) {
+                cui_icon(ui, CUI_ICON_DOWNLOAD, 34.0f, CUI_COLOR_TEXT_MUTED);
+                cui_text(ui, wada_tr("Check for app updates"), .font = CUI_FONT_MEDIUM,
+                         .size = 15, .align = CUI_TEXT_CENTER);
+                cui_text(ui,
+                         wada_tr("Click Check for Updates to scan installed packages with winget."),
+                         .size = 12, .color = CUI_COLOR_TEXT_MUTED, .align = CUI_TEXT_CENTER,
+                         .width = CUI_FILL);
+                if (cui_button(ui, wada_tr("Check for Updates"), .variant = CUI_BUTTON_PRIMARY,
+                               .icon = CUI_ICON_REFRESH_CW)) {
+                    start_update_check(st, app);
+                }
+            }
         } else if (snap->count == 0 && !st->updater_running) {
             cui_empty_state(ui, wada_tr("All apps are up to date"),
                             .description = wada_tr("No pending updates were reported by winget."));
@@ -111,7 +134,7 @@ void wc_view_updater_draw(wc_cleaner_state *st, wada_app *app) {
                                     }
                                 }
                             }
-                            cui_text(ui, it->id, .font = CUI_FONT_MONO, .size = 11,
+                            cui_text(ui, it->id, .font = CUI_FONT_MONO, .size = 12,
                                      .color = CUI_COLOR_TEXT_MUTED, .nowrap = true);
                         }
                     }

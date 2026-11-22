@@ -39,10 +39,20 @@ static void pick_preset_folder(wc_cleaner_state *st, const char *env_var, const 
 void wc_view_disk_draw(wc_cleaner_state *st, wada_app *app) {
     cui_ctx *ui = wada_app_ui(app);
 
-    char total_str[32], files_str[32], dirs_str[32];
-    wc_format_bytes(st->disk_snap.total_bytes, total_str, sizeof total_str);
-    snprintf(files_str, sizeof files_str, "%llu", (unsigned long long)st->disk_snap.total_files);
-    snprintf(dirs_str, sizeof dirs_str, "%llu", (unsigned long long)st->disk_snap.total_dirs);
+    char total_buf[32], files_buf[32], dirs_buf[32];
+    const char *total_str = "—";
+    const char *files_str = "—";
+    const char *dirs_str = "—";
+    if (st->disk_snap.state != WC_JOB_IDLE) {
+        wc_format_bytes(st->disk_snap.total_bytes, total_buf, sizeof total_buf);
+        snprintf(files_buf, sizeof files_buf, "%llu",
+                 (unsigned long long)st->disk_snap.total_files);
+        snprintf(dirs_buf, sizeof dirs_buf, "%llu",
+                 (unsigned long long)st->disk_snap.total_dirs);
+        total_str = total_buf;
+        files_str = files_buf;
+        dirs_str = dirs_buf;
+    }
 
     const char *tab_labels[2] = {wada_tr("Largest Folders"), wada_tr("Largest Files")};
 
@@ -58,6 +68,17 @@ void wc_view_disk_draw(wc_cleaner_state *st, wada_app *app) {
             cui_input(ui, "disk-root-input", st->disk_root, sizeof st->disk_root,
                       .placeholder = wada_tr("Folder path to analyze…"), .width = CUI_FILL,
                       .disabled = st->disk_running);
+#ifdef _WIN32
+            if (!st->disk_running) {
+                if (cui_button(ui, wada_tr("Browse…"), .variant = CUI_BUTTON_OUTLINE,
+                               .icon = CUI_ICON_FOLDER_OPEN)) {
+                    char picked[WC_PATH_CAP];
+                    if (wc_plat_pick_folder(picked, sizeof picked)) {
+                        snprintf(st->disk_root, sizeof st->disk_root, "%s", picked);
+                    }
+                }
+            }
+#endif
             if (!st->disk_running) {
                 if (cui_button(ui, wada_tr("Scan"), .variant = CUI_BUTTON_PRIMARY,
                                .icon = CUI_ICON_SEARCH, .disabled = !st->disk_root[0])) {
@@ -110,7 +131,7 @@ void wc_view_disk_draw(wc_cleaner_state *st, wada_app *app) {
             cui_progress(ui, 0.0f, .indeterminate = true, .width = CUI_FILL, .label = scanning_lbl,
                          .tone = CUI_TONE_ACCENT);
             if (st->disk_snap.current_dir[0]) {
-                cui_text(ui, st->disk_snap.current_dir, .size = 11, .color = CUI_COLOR_TEXT_MUTED,
+                cui_text(ui, st->disk_snap.current_dir, .size = 12, .color = CUI_COLOR_TEXT_MUTED,
                          .nowrap = true);
             }
         }
@@ -194,7 +215,7 @@ void wc_view_disk_draw(wc_cleaner_state *st, wada_app *app) {
                                         }
                                     }
                                 }
-                                cui_text(ui, e->path, .size = 11, .color = CUI_COLOR_TEXT_MUTED,
+                                cui_text(ui, e->path, .size = 12, .color = CUI_COLOR_TEXT_MUTED,
                                          .nowrap = true);
                             }
                         }

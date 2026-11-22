@@ -28,7 +28,7 @@ static const wc_target_def g_rules[] = {
         "",
         "",
         "",
-        true,
+        false,
         false,
     },
     {

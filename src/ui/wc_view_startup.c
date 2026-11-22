@@ -37,15 +37,22 @@ static const char *source_label(wc_startup_source src) {
     return "Startup";
 }
 
+static void fill_startup_list(void *items, int max_items, int *out_count) {
+    wc_plat_list_startup((wc_startup_item *)items, max_items, out_count);
+}
+
 void wc_startup_refresh(wc_cleaner_state *st) {
-    if (!st || !st->startup_items) return;
-    st->startup_loaded = true;
-    st->startup_count = 0;
-    wc_plat_list_startup(st->startup_items, WC_MAX_STARTUP, &st->startup_count);
+    if (!st || !st->startup_items || st->startup_loading) return;
+    if (wc_list_job_start(&st->startup_job, st->startup_items, sizeof *st->startup_items,
+                          WC_MAX_STARTUP, fill_startup_list)) {
+        st->startup_loading = true;
+        st->startup_loaded = false;
+        st->startup_count = 0;
+    }
 }
 
 void wc_view_startup_draw(wc_cleaner_state *st, wada_app *app) {
-    if (!st->startup_loaded) wc_startup_refresh(st);
+    if (!st->startup_loaded && !st->startup_loading) wc_startup_refresh(st);
 
     cui_ctx *ui = wada_app_ui(app);
     int enabled_count = 0;
@@ -59,8 +66,12 @@ void wc_view_startup_draw(wc_cleaner_state *st, wada_app *app) {
     }
 
     char count_text[64];
-    wada_trf(count_text, sizeof count_text, "%d enabled / %d total", enabled_count,
-             st->startup_count);
+    if (st->startup_loading) {
+        snprintf(count_text, sizeof count_text, "%s", wada_tr("Loading…"));
+    } else {
+        wada_trf(count_text, sizeof count_text, "%d enabled / %d total", enabled_count,
+                 st->startup_count);
+    }
 
     cui_column(ui, .width = CUI_FILL, .height = CUI_FILL, .pad = 20, .gap = 12) {
         cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER,
@@ -72,9 +83,8 @@ void wc_view_startup_draw(wc_cleaner_state *st, wada_app *app) {
                          .size = 12, .color = CUI_COLOR_TEXT_MUTED);
             }
             if (cui_button(ui, wada_tr("Refresh"), .variant = CUI_BUTTON_OUTLINE,
-                           .icon = CUI_ICON_REFRESH_CW)) {
+                           .icon = CUI_ICON_REFRESH_CW, .disabled = st->startup_loading)) {
                 wc_startup_refresh(st);
-                wada_app_set_status(app, wada_tr("Startup list refreshed"));
             }
         }
 
@@ -84,7 +94,14 @@ void wc_view_startup_draw(wc_cleaner_state *st, wada_app *app) {
             cui_text(ui, count_text, .size = 12, .color = CUI_COLOR_TEXT_SECONDARY, .tabular = true);
         }
 
-        if (shown_count == 0) {
+        if (st->startup_loading) {
+            cui_column(ui, .width = CUI_FILL, .height = CUI_FILL, .align = CUI_ALIGN_CENTER,
+                       .justify = CUI_JUSTIFY_CENTER) {
+                cui_progress(ui, 0.0f, .indeterminate = true, .width = CUI_PX(260),
+                             .label = wada_tr("Loading startup items…"),
+                             .tone = CUI_TONE_ACCENT);
+            }
+        } else if (shown_count == 0) {
             cui_empty_state(ui, wada_tr("No startup items found"),
                             .description = wada_tr("Try clearing your search filter or refreshing."));
         } else {
@@ -114,21 +131,34 @@ void wc_view_startup_draw(wc_cleaner_state *st, wada_app *app) {
                                     }
                                 }
 
-                                bool next = item->enabled;
-                                if (cui_switch(ui, wada_tr(item->enabled ? "Enabled" : "Disabled"),
-                                               &next, .disabled = locked)) {
-                                    if (wc_plat_set_startup_enabled(item, next)) {
-                                        item->enabled = next;
-                                        wada_app_set_status(app, wada_tr("Updated startup item"));
-                                    } else {
-                                        wada_app_set_status(
-                                            app, wada_tr("Could not update startup item"));
+                                if (locked) {
+                                    cui_row(ui, .align = CUI_ALIGN_CENTER, .gap = 6) {
+                                        cui_text(ui,
+                                                 wada_tr(item->enabled ? "Enabled" : "Disabled"),
+                                                 .size = 12,
+                                                 .color = CUI_COLOR_TEXT_SECONDARY);
+                                        cui_icon(ui, CUI_ICON_LOCK, 14.0f,
+                                                 CUI_COLOR_TEXT_MUTED);
+                                    }
+                                } else {
+                                    bool next = item->enabled;
+                                    if (cui_switch(ui,
+                                                   wada_tr(item->enabled ? "Enabled" : "Disabled"),
+                                                   &next)) {
+                                        if (wc_plat_set_startup_enabled(item, next)) {
+                                            item->enabled = next;
+                                            wada_app_set_status(app,
+                                                                wada_tr("Updated startup item"));
+                                        } else {
+                                            wada_app_set_status(
+                                                app, wada_tr("Could not update startup item"));
+                                        }
                                     }
                                 }
                             }
 
                             if (item->command[0]) {
-                                cui_text(ui, item->command, .size = 11,
+                                cui_text(ui, item->command, .size = 12,
                                          .color = CUI_COLOR_TEXT_MUTED, .nowrap = true);
                             }
                         }

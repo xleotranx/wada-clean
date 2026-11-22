@@ -7,9 +7,11 @@
 #include "wada_product.h"
 #include "wada_ui.h"
 #include "wc_cookies.h"
+#include "wc_cookie_job.h"
 #include "wc_disk.h"
 #include "wc_exclusions.h"
 #include "wc_history.h"
+#include "wc_list_job.h"
 #include "wc_types.h"
 #include "wc_updater.h"
 #include "wc_worker.h"
@@ -34,6 +36,8 @@ typedef enum wc_view_id {
     WC_VIEW_AUTOMATION = 7
 } wc_view_id;
 
+#define WC_APP_VERSION "0.1.0"
+
 typedef struct wc_cleaner_state {
     wada_app *app;
     wc_view_id active_view;
@@ -41,6 +45,10 @@ typedef struct wc_cleaner_state {
     bool dry_run;
     bool running;
     bool has_analyzed;
+    bool preview_open;
+    wc_preview_item preview_items[WC_MAX_PREVIEW];
+    int preview_ui_count;
+    bool preview_ui_truncated;
 
     /* System drive summary */
     uint64_t sys_drive_free;
@@ -59,6 +67,9 @@ typedef struct wc_cleaner_state {
     wc_history history;
     wc_history_entry history_entries[WC_HISTORY_UI_CAP];
     int history_count;
+    bool history_open;
+    int history_selected;
+    bool about_open;
 
     wada_ui_confirm confirm;
 
@@ -68,26 +79,33 @@ typedef struct wc_cleaner_state {
     wc_exclusion_item exclusion_items[WC_MAX_EXCLUSIONS];
     int exclusion_count;
     char exclusion_draft[WC_PATH_CAP];
+    char exclusion_error[160];
 
     wc_cookies cookies;
     wc_cookie_allow_item cookie_items[WC_MAX_COOKIE_ALLOW];
     int cookie_count;
     char cookie_draft[192];
-    bool cookie_has_report;
-    uint64_t cookie_last_removed;
-    uint64_t cookie_last_kept;
-    int cookie_last_skipped_browsers;
+    char cookie_error[160];
+    bool cookie_dry_run;
+    wc_cookie_job cookie_job;
+    wc_cookie_snapshot cookie_snap;
+    bool cookie_job_running;
+    wada_ui_confirm cookie_confirm;
 
     /* Startup Manager view */
     wc_startup_item *startup_items;
     int startup_count;
     bool startup_loaded;
+    bool startup_loading;
+    wc_list_job startup_job;
     char startup_search[64];
 
     /* Installed Apps view */
     wc_app_item *app_items;
     int app_count;
     bool apps_loaded;
+    bool apps_loading;
+    wc_list_job app_job;
     char apps_search[64];
     char apps_last_query[64];
     int apps_sort;
@@ -118,6 +136,7 @@ typedef struct wc_cleaner_state {
     double sched_hour;
     bool tray_enabled;
 
+    char data_dir[WC_PATH_CAP];
     char status[128];
 } wc_cleaner_state;
 
@@ -128,6 +147,9 @@ void wc_relaunch_admin(wc_cleaner_state *st, wada_app *app);
 void wc_health_run_checkup(wc_cleaner_state *st);
 void wc_cleaner_start_analyze(wc_cleaner_state *st);
 void wc_cleaner_start_clean(wc_cleaner_state *st);
+
+/* Newest completed (non-preview) run, or NULL when only dry runs exist. */
+const wc_history_entry *wc_last_clean_run(const wc_cleaner_state *st);
 void wc_cleaner_cancel_job(wc_cleaner_state *st);
 void wc_cleaner_select_all(wc_cleaner_state *st, bool select);
 void wc_cleaner_select_category(wc_cleaner_state *st, wc_category cat, bool select);

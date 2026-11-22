@@ -107,7 +107,6 @@ static int run_scheduled_clean(bool dry_run) {
     bool is_admin = wc_plat_is_admin();
     volatile int cancel = 0;
     uint64_t total_files = 0, total_bytes = 0, total_skipped = 0;
-    int ran = 0;
 
     int nrules = wc_rules_count();
     if (nrules > WC_MAX_TARGETS) nrules = WC_MAX_TARGETS;
@@ -123,50 +122,83 @@ static int run_scheduled_clean(bool dry_run) {
     }
     wc_plat_processes_running(proc_names, nrules, proc_running);
 
+    wc_history_entry entry;
+    memset(&entry, 0, sizeof entry);
+    entry.unix_sec = (long long)time(NULL);
+    entry.dry_run = dry_run;
+
     for (int i = 0; i < nrules; i++) {
         const wc_target_def *def = wc_rules_get(i);
         if (!def || !def->default_enabled) continue;
-        if (def->needs_admin && !is_admin) continue;
+        if (def->needs_admin && !is_admin) {
+            wc_history_append_detail(&entry, def->id, def->label, 0, 0, 0,
+                                     "Requires Administrator");
+            continue;
+        }
 
         if (def->kind == WC_TARGET_RECYCLE_BIN) {
             uint64_t files = 0, bytes = 0;
-            wc_plat_query_recycle_bin(&files, &bytes);
+            if (!wc_plat_query_recycle_bin(&files, &bytes)) {
+                total_skipped++;
+                wc_history_append_detail(&entry, def->id, def->label, 0, 0, 1,
+                                         "Could not query Recycle Bin");
+                continue;
+            }
             if (dry_run || files == 0 || wc_plat_empty_recycle_bin()) {
                 total_files += files;
                 total_bytes += bytes;
+                wc_history_append_detail(&entry, def->id, def->label, files, bytes, 0,
+                                         dry_run ? "Dry-run preview" : "");
             } else {
                 total_skipped += files;
+                wc_history_append_detail(&entry, def->id, def->label, 0, 0, files,
+                                         "Failed to empty Recycle Bin");
             }
-            ran++;
         } else {
             if (proc_running[i]) {
                 total_skipped++;
+                wc_history_append_detail(&entry, def->id, def->label, 0, 0, 1,
+                                         "Browser is running");
                 continue;
             }
             char path[WC_PATH_CAP];
-            if (!wc_rules_resolve_path(def, path, sizeof path)) continue;
+            if (!wc_rules_resolve_path(def, path, sizeof path)) {
+                wc_history_append_detail(&entry, def->id, def->label, 0, 0, 1,
+                                         "Unavailable path");
+                continue;
+            }
             uint64_t f = 0, b = 0, s = 0;
             if (wc_plat_clean_target(def->kind, path, dry_run, &cancel, excl_fn, ectx, &f, &b,
                                      &s)) {
                 total_files += f;
                 total_bytes += b;
                 total_skipped += s;
+                const char *note = s > 0 ? "Some files skipped (in use)"
+                                         : (dry_run ? "Dry-run preview" : "");
+                wc_history_append_detail(&entry, def->id, def->label, f, b, s, note);
+            } else {
+                total_skipped++;
+                wc_history_append_detail(&entry, def->id, def->label, 0, 0, 1, "Access denied");
             }
-            ran++;
+        }
+    }
+
+    int detail_targets = 0;
+    if (entry.details[0]) {
+        detail_targets = 1;
+        for (const char *p = entry.details; *p; p++) {
+            if (*p == '\n') detail_targets++;
         }
     }
 
     char size_buf[32];
     wc_format_bytes(total_bytes, size_buf, sizeof size_buf);
 
-    wc_history_entry entry;
-    memset(&entry, 0, sizeof entry);
-    entry.unix_sec = (long long)time(NULL);
-    entry.dry_run = dry_run;
     entry.files_cleaned = total_files;
     entry.bytes_cleaned = total_bytes;
     entry.skipped_count = total_skipped;
-    snprintf(entry.summary, sizeof entry.summary, "Scheduled: %s (%d targets)", size_buf, ran);
+    snprintf(entry.summary, sizeof entry.summary, "Scheduled: %s (%d targets)", size_buf,
+             detail_targets);
     wc_history_append(&hist, &entry, &err);
 
     free(ectx);

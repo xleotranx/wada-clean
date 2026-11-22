@@ -309,6 +309,8 @@ static void test_history(const char *root) {
     e2.bytes_cleaned = 4096;
     e2.skipped_count = 1;
     snprintf(e2.summary, sizeof e2.summary, "run 2");
+    wc_history_append_detail(&e2, "win.user_temp", "User Temp Files", 3, 1234, 1,
+                             "Some files skipped (in use)");
     CHECK(wc_history_append(&h, &e2, &err) == WADA_OK);
 
     wc_history_entry listed[10];
@@ -320,6 +322,7 @@ static void test_history(const char *root) {
     CHECK(listed[0].files_cleaned == 5);
     CHECK(listed[0].bytes_cleaned == 4096);
     CHECK(listed[0].skipped_count == 1);
+    CHECK(strstr(listed[0].details, "win.user_temp|User Temp Files|3|1234|1|") != NULL);
 
     CHECK(strcmp(listed[1].summary, "run 1") == 0);
     CHECK(listed[1].dry_run);

@@ -86,7 +86,8 @@ static bool delete_file_w(const wchar_t *path_w, DWORD attrs) {
 
 static bool walk_dir_w(const wchar_t *dir_w, const char *dir_utf8, bool clean, bool dry_run,
                        const volatile int *cancel_flag, wc_exclude_fn is_excluded, void *excl_user,
-                       uint64_t *files, uint64_t *bytes, uint64_t *skipped, int depth) {
+                       uint64_t *files, uint64_t *bytes, uint64_t *skipped, wc_sample_fn sample,
+                       void *sample_user, int max_samples, int *sample_count, int depth) {
     if (depth > WC_WALK_MAX_DEPTH) return true;
     if (cancel_flag && *cancel_flag) return false;
 
@@ -135,14 +136,14 @@ static bool walk_dir_w(const wchar_t *dir_w, const char *dir_utf8, bool clean, b
 
         char child_utf8[WC_PATH_CAP];
         const char *next_utf8 = NULL;
-        if (is_excluded && dir_utf8) {
+        if ((is_excluded || sample) && dir_utf8) {
             char name_utf8[WC_PATH_CAP];
             if (!wide_to_utf8(ffd.cFileName, name_utf8, sizeof name_utf8) ||
                 !join_child_utf8(child_utf8, sizeof child_utf8, dir_utf8, name_utf8)) {
                 if (skipped) (*skipped)++;
                 continue;
             }
-            if (is_excluded(child_utf8, excl_user)) {
+            if (is_excluded && is_excluded(child_utf8, excl_user)) {
                 continue;
             }
             next_utf8 = child_utf8;
@@ -150,7 +151,8 @@ static bool walk_dir_w(const wchar_t *dir_w, const char *dir_utf8, bool clean, b
 
         if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             if (!walk_dir_w(child_w, next_utf8, clean, dry_run, cancel_flag, is_excluded,
-                            excl_user, files, bytes, skipped, depth + 1)) {
+                            excl_user, files, bytes, skipped, sample, sample_user, max_samples,
+                            sample_count, depth + 1)) {
                 ok = false;
                 break;
             }
@@ -159,6 +161,10 @@ static bool walk_dir_w(const wchar_t *dir_w, const char *dir_utf8, bool clean, b
             }
         } else {
             uint64_t sz = ((uint64_t)ffd.nFileSizeHigh << 32) | (uint64_t)ffd.nFileSizeLow;
+            if (sample && next_utf8 && sample_count && *sample_count < max_samples) {
+                sample(next_utf8, sz, sample_user);
+                (*sample_count)++;
+            }
             if (!clean || dry_run) {
                 if (files) (*files)++;
                 if (bytes) (*bytes) += sz;
@@ -178,7 +184,8 @@ static bool walk_dir_w(const wchar_t *dir_w, const char *dir_utf8, bool clean, b
 static bool walk_thumb_cache_w(const wchar_t *root_w, const char *root_utf8, bool clean,
                                bool dry_run, const volatile int *cancel_flag,
                                wc_exclude_fn is_excluded, void *excl_user, uint64_t *files,
-                               uint64_t *bytes, uint64_t *skipped) {
+                               uint64_t *bytes, uint64_t *skipped, wc_sample_fn sample,
+                               void *sample_user, int max_samples, int *sample_count) {
     if (cancel_flag && *cancel_flag) return false;
 
     wchar_t wpattern[WC_PATH_CAP];
@@ -211,16 +218,22 @@ static bool walk_thumb_cache_w(const wchar_t *root_w, const char *root_utf8, boo
         if (!wide_to_utf8(ffd.cFileName, name_utf8, sizeof name_utf8)) continue;
         if (!wc_safety_is_thumbcache_file(name_utf8)) continue;
 
-        if (is_excluded && root_utf8) {
-            char child_utf8[WC_PATH_CAP];
+        char child_utf8[WC_PATH_CAP];
+        bool have_child_utf8 = false;
+        if ((is_excluded || sample) && root_utf8) {
             if (!join_child_utf8(child_utf8, sizeof child_utf8, root_utf8, name_utf8)) {
                 if (skipped) (*skipped)++;
                 continue;
             }
-            if (is_excluded(child_utf8, excl_user)) continue;
+            if (is_excluded && is_excluded(child_utf8, excl_user)) continue;
+            have_child_utf8 = true;
         }
 
         uint64_t sz = ((uint64_t)ffd.nFileSizeHigh << 32) | (uint64_t)ffd.nFileSizeLow;
+        if (sample && have_child_utf8 && sample_count && *sample_count < max_samples) {
+            sample(child_utf8, sz, sample_user);
+            (*sample_count)++;
+        }
         if (!clean || dry_run) {
             if (files) (*files)++;
             if (bytes) (*bytes) += sz;
@@ -246,7 +259,8 @@ static bool walk_thumb_cache_w(const wchar_t *root_w, const char *root_utf8, boo
 static bool walk_firefox_profiles_w(const wchar_t *root_w, const char *root_utf8, bool clean,
                                     bool dry_run, const volatile int *cancel_flag,
                                     wc_exclude_fn is_excluded, void *excl_user, uint64_t *files,
-                                    uint64_t *bytes, uint64_t *skipped) {
+                                    uint64_t *bytes, uint64_t *skipped, wc_sample_fn sample,
+                                    void *sample_user, int max_samples, int *sample_count) {
     if (cancel_flag && *cancel_flag) return false;
 
     wchar_t wpattern[WC_PATH_CAP];
@@ -285,14 +299,14 @@ static bool walk_firefox_profiles_w(const wchar_t *root_w, const char *root_utf8
 
         char prof_utf8[WC_PATH_CAP];
         const char *prof_utf8_ptr = NULL;
-        if (is_excluded && root_utf8) {
+        if ((is_excluded || sample) && root_utf8) {
             char name_utf8[WC_PATH_CAP];
             if (!wide_to_utf8(ffd.cFileName, name_utf8, sizeof name_utf8) ||
                 !join_child_utf8(prof_utf8, sizeof prof_utf8, root_utf8, name_utf8)) {
                 if (skipped) (*skipped)++;
                 continue;
             }
-            if (is_excluded(prof_utf8, excl_user)) continue;
+            if (is_excluded && is_excluded(prof_utf8, excl_user)) continue;
             prof_utf8_ptr = prof_utf8;
         }
 
@@ -307,17 +321,18 @@ static bool walk_firefox_profiles_w(const wchar_t *root_w, const char *root_utf8
 
             char sub_utf8[WC_PATH_CAP];
             const char *sub_utf8_ptr = NULL;
-            if (is_excluded && prof_utf8_ptr) {
+            if ((is_excluded || sample) && prof_utf8_ptr) {
                 if (!join_child_utf8(sub_utf8, sizeof sub_utf8, prof_utf8_ptr,
                                      cache_subdirs_utf8[s])) {
                     continue;
                 }
-                if (is_excluded(sub_utf8, excl_user)) continue;
+                if (is_excluded && is_excluded(sub_utf8, excl_user)) continue;
                 sub_utf8_ptr = sub_utf8;
             }
 
             if (!walk_dir_w(sub_w, sub_utf8_ptr, clean, dry_run, cancel_flag, is_excluded,
-                            excl_user, files, bytes, skipped, 1)) {
+                            excl_user, files, bytes, skipped, sample, sample_user, max_samples,
+                            sample_count, 1)) {
                 ok = false;
                 break;
             }
@@ -350,9 +365,11 @@ static bool prepare_root(const char *root, char *norm_root, size_t cap, wchar_t 
     return true;
 }
 
-bool wc_plat_scan_target(wc_target_kind kind, const char *root, const volatile int *cancel_flag,
-                         wc_exclude_fn is_excluded, void *excl_user, uint64_t *out_files,
-                         uint64_t *out_bytes) {
+static bool scan_target_impl(wc_target_kind kind, const char *root,
+                             const volatile int *cancel_flag, wc_exclude_fn is_excluded,
+                             void *excl_user, wc_sample_fn sample, void *sample_user,
+                             int max_samples, int *sample_count, uint64_t *out_files,
+                             uint64_t *out_bytes) {
     if (out_files) *out_files = 0;
     if (out_bytes) *out_bytes = 0;
     if (kind == WC_TARGET_RECYCLE_BIN) return false;
@@ -367,17 +384,35 @@ bool wc_plat_scan_target(wc_target_kind kind, const char *root, const volatile i
     bool ok = false;
     if (kind == WC_TARGET_THUMB_CACHE) {
         ok = walk_thumb_cache_w(wroot, norm_root, false, false, cancel_flag, is_excluded, excl_user,
-                                &files, &bytes, NULL);
+                                &files, &bytes, NULL, sample, sample_user, max_samples,
+                                sample_count);
     } else if (kind == WC_TARGET_FIREFOX_PROFILES) {
         ok = walk_firefox_profiles_w(wroot, norm_root, false, false, cancel_flag, is_excluded,
-                                     excl_user, &files, &bytes, NULL);
+                                     excl_user, &files, &bytes, NULL, sample, sample_user,
+                                     max_samples, sample_count);
     } else {
         ok = walk_dir_w(wroot, norm_root, false, false, cancel_flag, is_excluded, excl_user, &files,
-                        &bytes, NULL, 0);
+                        &bytes, NULL, sample, sample_user, max_samples, sample_count, 0);
     }
     if (out_files) *out_files = files;
     if (out_bytes) *out_bytes = bytes;
     return ok;
+}
+
+bool wc_plat_scan_target(wc_target_kind kind, const char *root, const volatile int *cancel_flag,
+                         wc_exclude_fn is_excluded, void *excl_user, uint64_t *out_files,
+                         uint64_t *out_bytes) {
+    return scan_target_impl(kind, root, cancel_flag, is_excluded, excl_user, NULL, NULL, 0, NULL,
+                            out_files, out_bytes);
+}
+
+bool wc_plat_scan_target_preview(wc_target_kind kind, const char *root,
+                                 const volatile int *cancel_flag, wc_exclude_fn is_excluded,
+                                 void *excl_user, wc_sample_fn on_sample, void *sample_user,
+                                 int max_samples, uint64_t *out_files, uint64_t *out_bytes) {
+    int samples = 0;
+    return scan_target_impl(kind, root, cancel_flag, is_excluded, excl_user, on_sample,
+                            sample_user, max_samples, &samples, out_files, out_bytes);
 }
 
 bool wc_plat_clean_target(wc_target_kind kind, const char *root, bool dry_run,
@@ -399,13 +434,13 @@ bool wc_plat_clean_target(wc_target_kind kind, const char *root, bool dry_run,
     bool ok = false;
     if (kind == WC_TARGET_THUMB_CACHE) {
         ok = walk_thumb_cache_w(wroot, norm_root, true, dry_run, cancel_flag, is_excluded,
-                                excl_user, &files, &bytes, &skipped);
+                                excl_user, &files, &bytes, &skipped, NULL, NULL, 0, NULL);
     } else if (kind == WC_TARGET_FIREFOX_PROFILES) {
         ok = walk_firefox_profiles_w(wroot, norm_root, true, dry_run, cancel_flag, is_excluded,
-                                     excl_user, &files, &bytes, &skipped);
+                                     excl_user, &files, &bytes, &skipped, NULL, NULL, 0, NULL);
     } else {
         ok = walk_dir_w(wroot, norm_root, true, dry_run, cancel_flag, is_excluded, excl_user, &files,
-                        &bytes, &skipped, 0);
+                        &bytes, &skipped, NULL, NULL, 0, NULL, 0);
     }
     if (out_files) *out_files = files;
     if (out_bytes) *out_bytes = bytes;

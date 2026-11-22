@@ -9,7 +9,7 @@
 #include "wc_safety.h"
 
 void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
-    if (!st->startup_loaded) wc_startup_refresh(st);
+    if (!st->startup_loaded && !st->startup_loading) wc_startup_refresh(st);
 
     cui_ctx *ui = wada_app_ui(app);
 
@@ -46,13 +46,17 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
     }
 
     char startup_value[64];
-    wada_trf(startup_value, sizeof startup_value, "%d enabled / %d total", enabled_startup,
-             st->startup_count);
+    if (st->startup_loading) {
+        snprintf(startup_value, sizeof startup_value, "%s", wada_tr("Loading…"));
+    } else {
+        wada_trf(startup_value, sizeof startup_value, "%d enabled / %d total", enabled_startup,
+                 st->startup_count);
+    }
 
     char last_value[48];
     char last_desc[64];
-    if (st->history_count > 0) {
-        const wc_history_entry *last = &st->history_entries[0];
+    const wc_history_entry *last = wc_last_clean_run(st);
+    if (last) {
         char sz[32];
         wc_format_bytes(last->bytes_cleaned, sz, sizeof sz);
         wada_trf(last_value, sizeof last_value, "%s freed", sz);
@@ -65,18 +69,21 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
     bool attention = (st->has_analyzed && st->snap.total_bytes_found > 0) ||
                      (drive_used_frac > 0.85f) || enabled_startup > 8;
 
-    const char *hero_badge = "System Ready";
-    cui_tone hero_tone = CUI_TONE_SUCCESS;
+    const char *hero_badge = "Not checked yet";
+    cui_tone hero_tone = CUI_TONE_NEUTRAL;
     const char *hero_msg = "Click Run Health Check to scan junk targets and startup impact.";
     if (st->running) {
         hero_badge = "Analyzing System…";
         hero_tone = CUI_TONE_INFO;
         hero_msg = "Scanning system and browser targets…";
-    } else if (st->has_analyzed && attention) {
+    } else if (!st->has_analyzed) {
+        hero_badge = "Not checked yet";
+        hero_tone = CUI_TONE_NEUTRAL;
+    } else if (attention) {
         hero_badge = "Attention Suggested";
         hero_tone = CUI_TONE_WARNING;
         hero_msg = "Review the recommendations below to keep your PC clean and responsive.";
-    } else if (st->has_analyzed) {
+    } else {
         hero_badge = "System Ready";
         hero_tone = CUI_TONE_SUCCESS;
         hero_msg = "Your system looks clean and responsive.";
@@ -145,14 +152,14 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
                     cui_progress(ui, drive_used_frac, .width = CUI_FILL, .height = 6.0f,
                                  .tone = drive_used_frac > 0.85f ? CUI_TONE_WARNING
                                                                  : CUI_TONE_ACCENT);
-                    cui_text(ui, drive_desc, .size = 11, .color = CUI_COLOR_TEXT_MUTED);
+                    cui_text(ui, drive_desc, .size = 12, .color = CUI_COLOR_TEXT_MUTED);
                 }
             }
             cui_card(ui, .width = CUI_GROW(1.0f), .pad = 14, .gap = 6) {
                 cui_text(ui, wada_tr("Reclaimable Junk"), .size = 12,
                          .color = CUI_COLOR_TEXT_MUTED);
                 cui_text(ui, junk_value, .font = CUI_FONT_DISPLAY, .size = 24, .tabular = true);
-                cui_text(ui, junk_desc, .size = 11, .color = CUI_COLOR_TEXT_MUTED);
+                cui_text(ui, junk_desc, .size = 12, .color = CUI_COLOR_TEXT_MUTED);
             }
         }
 
@@ -165,7 +172,7 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
             cui_card(ui, .width = CUI_GROW(1.0f), .pad = 14, .gap = 6) {
                 cui_text(ui, wada_tr("Last Clean"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
                 cui_text(ui, last_value, .font = CUI_FONT_DISPLAY, .size = 24, .tabular = true);
-                cui_text(ui, last_desc, .size = 11, .color = CUI_COLOR_TEXT_MUTED);
+                cui_text(ui, last_desc, .size = 12, .color = CUI_COLOR_TEXT_MUTED);
             }
         }
 
@@ -212,13 +219,6 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
                 if (cui_button(ui, wada_tr("Manage Exclusions"), .variant = CUI_BUTTON_OUTLINE,
                                .size = CUI_SIZE_SM)) {
                     st->active_view = WC_VIEW_EXCLUSIONS;
-                }
-                if (!st->is_admin) {
-                    if (cui_button(ui, wada_tr("Restart as Administrator"),
-                                   .variant = CUI_BUTTON_GHOST, .size = CUI_SIZE_SM,
-                                   .icon = CUI_ICON_SHIELD)) {
-                        wc_relaunch_admin(st, app);
-                    }
                 }
             }
         }

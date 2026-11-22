@@ -21,6 +21,8 @@ add_library(wc_engine STATIC
     src/engine/wc_exclusions.c
     src/engine/wc_updater.c
     src/engine/wc_cookies.c
+    src/engine/wc_cookie_job.c
+    src/engine/wc_list_job.c
 )
 target_include_directories(wc_engine PUBLIC src/engine src/platform)
 target_link_libraries(wc_engine PUBLIC wada_core wc_platform)
@@ -40,9 +42,11 @@ if(WIN32)
         src/platform/win32/wc_win_apps.c
         src/platform/win32/wc_win_updater.c
         src/platform/win32/wc_win_sched.c
+        src/platform/win32/wc_win_dialog.c
+        src/platform/win32/wc_win_cookies.c
     )
     target_include_directories(wc_platform PUBLIC src/platform src/engine "${WADA_C_ABS}/vendor/sqlite")
-    target_link_libraries(wc_platform PUBLIC wc_engine wada_sqlite shell32 advapi32 user32)
+    target_link_libraries(wc_platform PUBLIC wc_engine wada_sqlite shell32 advapi32 user32 ole32 uuid)
     if(MSVC)
         target_compile_options(wc_platform PRIVATE /W4)
     else()
@@ -58,6 +62,7 @@ elseif(APPLE)
         src/platform/macos/wc_mac_apps.c
         src/platform/macos/wc_mac_updater.c
         src/platform/macos/wc_mac_sched.c
+        src/platform/macos/wc_mac_cookies.c
     )
     target_include_directories(wc_platform PUBLIC src/platform src/engine "${WADA_C_ABS}/vendor/sqlite")
     target_link_libraries(wc_platform PUBLIC wc_engine wada_sqlite Threads::Threads)
