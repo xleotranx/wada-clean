@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Ninja
+        shell: pwsh
+        run: choco install ninja -y
+
+      - name: Configure & Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure
+
+      - name: Package Windows ZIP
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $dist = "dist"
+          New-Item -ItemType Directory -Path "$dist\stage" -Force | Out-Null
+          Copy-Item "build\wada_clean.exe" "$dist\stage\wada_clean.exe"
+          Copy-Item "LICENSE" "$dist\stage\LICENSE"
+          Copy-Item "README.md" "$dist\stage\README.md"
+          $zip = "$dist\wada-clean-v$tag-win64.zip"
+          Compress-Archive -Path "$dist\stage\*" -DestinationPath $zip
+          $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  wada-clean-v$tag-win64.zip" | Set-Content -Path "$zip.sha256" -Encoding ASCII
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.sha256
+          generate_release_notes: true

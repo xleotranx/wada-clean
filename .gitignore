@@ -1,0 +1,16 @@
+build/
+dist/
+.tmp/
+*.exe
+*.o
+*.obj
+*.dll
+*.a
+*.lib
+*.pdb
+*.db
+*.db-wal
+*.db-shm
+doctor.txt
+wada.log
+wada.lock
