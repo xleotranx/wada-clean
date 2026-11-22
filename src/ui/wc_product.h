@@ -15,6 +15,13 @@
 #include "wc_worker.h"
 
 #define WC_HISTORY_UI_CAP 16
+#define WC_SCROLL_PAD_BOTTOM 16.0f
+
+/* Shared scrollable list container: measures true item heights and reserves
+ * bottom breathing room so the last item is never clipped at the scroll edge. */
+#define wc_scroll_list(ui, list_id, item_gap)                                           \
+    cui_column((ui), .id = (list_id), .width = CUI_FILL, .height = CUI_FILL,            \
+               .scroll_y = true, .gap = (item_gap), .pad_bottom = WC_SCROLL_PAD_BOTTOM)
 
 typedef enum wc_view_id {
     WC_VIEW_HEALTH = 0,

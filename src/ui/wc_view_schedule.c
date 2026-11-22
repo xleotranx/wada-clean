@@ -21,7 +21,8 @@ void wc_view_schedule_draw(wc_cleaner_state *st, wada_app *app) {
     cui_ctx *ui = wada_app_ui(app);
     const char *freq_labels[3] = {wada_tr("Off"), wada_tr("Daily"), wada_tr("Weekly")};
 
-    cui_column(ui, .width = CUI_FILL, .height = CUI_FILL, .pad = 20, .gap = 12) {
+    cui_column(ui, .id = "schedule-scroll", .width = CUI_FILL, .height = CUI_FILL,
+               .scroll_y = true, .pad = 20, .gap = 12) {
         cui_column(ui, .gap = 2) {
             cui_text(ui, wada_tr("Automation & Tray"), .font = CUI_FONT_DISPLAY, .size = 24);
             cui_text(ui,

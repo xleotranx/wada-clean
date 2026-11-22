@@ -132,7 +132,7 @@ void wc_view_disk_draw(wc_cleaner_state *st, wada_app *app) {
                 cui_empty_state(ui, wada_tr("No subfolders found"),
                                 .description = wada_tr("Try scanning a parent folder or checking Largest Files."));
             } else {
-                cui_scroll(ui, .id = "disk-dirs", .width = CUI_FILL, .height = CUI_FILL, .gap = 6) {
+                wc_scroll_list(ui, "disk-dirs", 6) {
                     for (int i = 0; i < st->disk_snap.top_dir_count; i++) {
                         const wc_disk_entry *e = &st->disk_snap.top_dirs[i];
                         float ratio = st->disk_snap.total_bytes > 0
@@ -172,7 +172,7 @@ void wc_view_disk_draw(wc_cleaner_state *st, wada_app *app) {
                 cui_empty_state(ui, wada_tr("No files found"),
                                 .description = wada_tr("No regular files were found in this folder."));
             } else {
-                cui_scroll(ui, .id = "disk-files", .width = CUI_FILL, .height = CUI_FILL, .gap = 6) {
+                wc_scroll_list(ui, "disk-files", 6) {
                     for (int i = 0; i < st->disk_snap.top_file_count; i++) {
                         const wc_disk_entry *e = &st->disk_snap.top_files[i];
                         char sz[32];

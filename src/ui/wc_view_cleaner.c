@@ -167,8 +167,7 @@ void wc_view_cleaner_draw(wc_cleaner_state *st, wada_app *app) {
         cui_row(ui, .width = CUI_FILL, .height = CUI_FILL, .gap = 16) {
             /* Left: Cleaner targets */
             cui_column(ui, .width = CUI_GROW(1.45f), .height = CUI_FILL, .gap = 6) {
-                cui_scroll(ui, .id = "cleaner-targets", .width = CUI_FILL, .height = CUI_FILL,
-                           .gap = 6) {
+                wc_scroll_list(ui, "cleaner-targets", 6) {
                     draw_category_group(st, ui, WC_CAT_SYSTEM, "System", true);
                     cui_separator(ui);
                     draw_category_group(st, ui, WC_CAT_BROWSER, "Browsers", false);
@@ -222,8 +221,7 @@ void wc_view_cleaner_draw(wc_cleaner_state *st, wada_app *app) {
                         cui_text(ui, wada_tr("No clean runs recorded yet."), .size = 12,
                                  .color = CUI_COLOR_TEXT_MUTED);
                     } else {
-                        cui_scroll(ui, .id = "cleaner-history", .width = CUI_FILL,
-                                   .height = CUI_FILL, .gap = 8) {
+                        wc_scroll_list(ui, "cleaner-history", 8) {
                             for (int i = 0; i < st->history_count; i++) {
                                 const wc_history_entry *e = &st->history_entries[i];
                                 char when[32];

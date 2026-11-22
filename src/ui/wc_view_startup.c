@@ -88,7 +88,7 @@ void wc_view_startup_draw(wc_cleaner_state *st, wada_app *app) {
             cui_empty_state(ui, wada_tr("No startup items found"),
                             .description = wada_tr("Try clearing your search filter or refreshing."));
         } else {
-            cui_scroll(ui, .id = "startup-list", .width = CUI_FILL, .height = CUI_FILL, .gap = 6) {
+            wc_scroll_list(ui, "startup-list", 6) {
                 for (int i = 0; i < st->startup_count; i++) {
                     wc_startup_item *item = &st->startup_items[i];
                     if (!str_contains_ci(item->name, st->startup_search) &&

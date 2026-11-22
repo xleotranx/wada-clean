@@ -136,7 +136,7 @@ static void draw_paths_tab(wc_cleaner_state *st, cui_ctx *ui, wada_app *app) {
         cui_empty_state(ui, wada_tr("No exclusions configured"),
                         .description = wada_tr("Add a file or folder path above to keep Junk Cleaner from touching it."));
     } else {
-        cui_scroll(ui, .id = "exclusions-list", .width = CUI_FILL, .height = CUI_FILL, .gap = 6) {
+        wc_scroll_list(ui, "exclusions-list", 6) {
             for (int i = 0; i < st->exclusion_count; i++) {
                 const wc_exclusion_item *item = &st->exclusion_items[i];
                 cui_id_scope(ui, item->id) {
@@ -207,7 +207,7 @@ static void draw_cookies_tab(wc_cleaner_state *st, cui_ctx *ui, wada_app *app) {
         cui_empty_state(ui, wada_tr("No allowed domains yet"),
                         .description = wada_tr("Add domains like github.com or google.com to preserve logins during cookie cleanup."));
     } else {
-        cui_scroll(ui, .id = "cookies-list", .width = CUI_FILL, .height = CUI_FILL, .gap = 6) {
+        wc_scroll_list(ui, "cookies-list", 6) {
             for (int i = 0; i < st->cookie_count; i++) {
                 const wc_cookie_allow_item *item = &st->cookie_items[i];
                 cui_id_scope(ui, item->id) {

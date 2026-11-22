@@ -117,43 +117,41 @@ void wc_view_apps_draw(wc_cleaner_state *st, wada_app *app) {
                     cui_empty_state(ui, wada_tr("No matching applications"),
                                     .description = wada_tr("Try clearing your search filter or refreshing."));
                 } else {
-                    int first = 0, last = 0;
-                    cui_virtual_list_begin(ui, "apps-list", st->filtered_app_count, 54.0f,
-                                           CUI_FILL, &first, &last);
-                    for (int i = first; i < last && i < st->filtered_app_count; i++) {
-                        int idx = st->filtered_apps[i];
-                        const wc_app_item *it = &st->app_items[idx];
+                    wc_scroll_list(ui, "apps-list", 0) {
+                        for (int i = 0; i < st->filtered_app_count; i++) {
+                            int idx = st->filtered_apps[i];
+                            const wc_app_item *it = &st->app_items[idx];
 
-                        char size_str[32];
-                        if (it->estimated_size_bytes > 0) {
-                            wc_format_bytes(it->estimated_size_bytes, size_str, sizeof size_str);
-                        } else {
-                            snprintf(size_str, sizeof size_str, "—");
-                        }
+                            char size_str[32];
+                            if (it->estimated_size_bytes > 0) {
+                                wc_format_bytes(it->estimated_size_bytes, size_str, sizeof size_str);
+                            } else {
+                                snprintf(size_str, sizeof size_str, "—");
+                            }
 
-                        char sub[224];
-                        if (it->publisher[0] && it->version[0]) {
-                            snprintf(sub, sizeof sub, "%s · %s", it->publisher, it->version);
-                        } else if (it->publisher[0]) {
-                            snprintf(sub, sizeof sub, "%s", it->publisher);
-                        } else if (it->version[0]) {
-                            snprintf(sub, sizeof sub, "%s", it->version);
-                        } else {
-                            snprintf(sub, sizeof sub, "%s",
-                                     wada_tr(it->is_user_install ? "Current User" : "System"));
-                        }
+                            char sub[224];
+                            if (it->publisher[0] && it->version[0]) {
+                                snprintf(sub, sizeof sub, "%s · %s", it->publisher, it->version);
+                            } else if (it->publisher[0]) {
+                                snprintf(sub, sizeof sub, "%s", it->publisher);
+                            } else if (it->version[0]) {
+                                snprintf(sub, sizeof sub, "%s", it->version);
+                            } else {
+                                snprintf(sub, sizeof sub, "%s",
+                                         wada_tr(it->is_user_install ? "Current User" : "System"));
+                            }
 
-                        char row_id[32];
-                        snprintf(row_id, sizeof row_id, "app-%d", idx);
-                        cui_id_scope(ui, row_id) {
-                            if (cui_list_item(ui, it->name, .subtitle = sub, .trailing = size_str,
-                                              .selected = (idx == st->app_selected))) {
-                                st->app_selected = idx;
-                                wada_ui_confirm_reset(&st->app_confirm);
+                            char row_id[32];
+                            snprintf(row_id, sizeof row_id, "app-%d", idx);
+                            cui_id_scope(ui, row_id) {
+                                if (cui_list_item(ui, it->name, .subtitle = sub, .trailing = size_str,
+                                                  .selected = (idx == st->app_selected))) {
+                                    st->app_selected = idx;
+                                    wada_ui_confirm_reset(&st->app_confirm);
+                                }
                             }
                         }
                     }
-                    cui_virtual_list_end(ui);
                 }
             }
 

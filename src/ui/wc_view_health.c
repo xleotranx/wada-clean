@@ -82,7 +82,8 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
         hero_msg = "Your system looks clean and responsive.";
     }
 
-    cui_column(ui, .width = CUI_FILL, .height = CUI_FILL, .pad = 20, .gap = 12) {
+    cui_column(ui, .id = "health-scroll", .width = CUI_FILL, .height = CUI_FILL, .scroll_y = true,
+               .pad = 20, .gap = 12) {
         cui_column(ui, .gap = 2) {
             cui_text(ui, wada_tr("PC Health Check"), .font = CUI_FONT_DISPLAY, .size = 24);
             cui_text(ui,
@@ -169,7 +170,7 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
         }
 
         /* Recommendations & quick actions */
-        cui_card(ui, .width = CUI_FILL, .height = CUI_FILL, .pad = 14, .gap = 8) {
+        cui_card(ui, .width = CUI_FILL, .pad = 14, .gap = 8) {
             cui_text(ui, wada_tr("Recommendations"), .font = CUI_FONT_MEDIUM, .size = 15);
 
             if (st->has_analyzed && st->snap.total_bytes_found > 0) {
@@ -198,8 +199,6 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
                          wada_tr("Everything looks good! Check back periodically or configure Exclusions to protect paths."),
                          .size = 12, .color = CUI_COLOR_TEXT_MUTED);
             }
-
-            cui_box(ui, .height = CUI_FILL) {}
 
             cui_row(ui, .width = CUI_FILL, .gap = 8) {
                 if (cui_button(ui, wada_tr("Review Junk Cleaner"), .variant = CUI_BUTTON_OUTLINE,

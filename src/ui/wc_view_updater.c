@@ -79,7 +79,7 @@ void wc_view_updater_draw(wc_cleaner_state *st, wada_app *app) {
             cui_empty_state(ui, wada_tr("All apps are up to date"),
                             .description = wada_tr("No pending updates were reported by winget."));
         } else {
-            cui_scroll(ui, .id = "updater-list", .width = CUI_FILL, .height = CUI_FILL, .gap = 6) {
+            wc_scroll_list(ui, "updater-list", 6) {
                 for (int i = 0; i < snap->count; i++) {
                     const wc_update_item *it = &snap->items[i];
                     char ver[140];
