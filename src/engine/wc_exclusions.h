@@ -24,4 +24,11 @@ wada_status wc_exclusions_list(wc_exclusions *ex, wc_exclusion_item *out, int ma
  * resides inside any directory pattern (case-insensitive on directory boundary). */
 bool wc_exclusion_matches(const char *candidate, const char *const *patterns, int count);
 
+/* Fast matcher where `norm_candidate` and every entry in `norm_patterns` are
+ * already normalized via `wc_safety_normalize_path`. `pattern_lens` may be NULL. */
+bool wc_exclusion_matches_norm(const char *norm_candidate,
+                               const char *const *norm_patterns,
+                               const size_t *pattern_lens,
+                               int count);
+
 #endif /* WC_EXCLUSIONS_H */

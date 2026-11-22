@@ -5,13 +5,10 @@
 #include "wc_cookies.h"
 #include "wc_platform.h"
 
-bool wc_plat_prune_cookie_db(const char *db_path, bool is_firefox, const char *const *allowlist,
-                             int allow_count, bool dry_run, uint64_t *out_removed,
-                             uint64_t *out_kept) {
-    if (out_removed) *out_removed = 0;
-    if (out_kept) *out_kept = 0;
-    if (!db_path || !db_path[0]) return false;
-
+static bool prune_cookie_db_norm(const char *db_path, bool is_firefox,
+                                 const char *const *norm_allowlist, const size_t *allow_lens,
+                                 int allow_count, bool dry_run, uint64_t *out_removed,
+                                 uint64_t *out_kept) {
     sqlite3 *db = NULL;
     int flags = dry_run ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE;
     if (sqlite3_open_v2(db_path, &db, flags, NULL) != SQLITE_OK) {
@@ -42,7 +39,7 @@ bool wc_plat_prune_cookie_db(const char *db_path, bool is_firefox, const char *c
         sqlite3_int64 rowid = sqlite3_column_int64(stmt, 0);
         const char *host = (const char *)sqlite3_column_text(stmt, 1);
 
-        if (wc_cookie_domain_allowed(host, allowlist, allow_count)) {
+        if (wc_cookie_domain_allowed_norm(host, norm_allowlist, allow_lens, allow_count)) {
             kept++;
         } else {
             removed++;
@@ -111,4 +108,44 @@ bool wc_plat_prune_cookie_db(const char *db_path, bool is_firefox, const char *c
     if (out_removed) *out_removed = removed;
     if (out_kept) *out_kept = kept;
     return true;
+}
+
+bool wc_plat_prune_cookie_db(const char *db_path, bool is_firefox, const char *const *allowlist,
+                             int allow_count, bool dry_run, uint64_t *out_removed,
+                             uint64_t *out_kept) {
+    if (out_removed) *out_removed = 0;
+    if (out_kept) *out_kept = 0;
+    if (!db_path || !db_path[0]) return false;
+
+    char (*norm_buf)[192] = NULL;
+    const char **norm_ptrs = NULL;
+    size_t *norm_lens = NULL;
+    int norm_count = 0;
+
+    if (allowlist && allow_count > 0) {
+        norm_buf = (char (*)[192])calloc((size_t)allow_count, sizeof *norm_buf);
+        norm_ptrs = (const char **)calloc((size_t)allow_count, sizeof *norm_ptrs);
+        norm_lens = (size_t *)calloc((size_t)allow_count, sizeof *norm_lens);
+        if (!norm_buf || !norm_ptrs || !norm_lens) {
+            free(norm_buf);
+            free(norm_ptrs);
+            free(norm_lens);
+            return false;
+        }
+        for (int i = 0; i < allow_count; i++) {
+            if (!allowlist[i] || !allowlist[i][0]) continue;
+            if (wc_cookie_normalize_domain(allowlist[i], norm_buf[norm_count], 192)) {
+                norm_ptrs[norm_count] = norm_buf[norm_count];
+                norm_lens[norm_count] = strlen(norm_buf[norm_count]);
+                norm_count++;
+            }
+        }
+    }
+
+    bool ok = prune_cookie_db_norm(db_path, is_firefox, norm_ptrs, norm_lens, norm_count, dry_run,
+                                   out_removed, out_kept);
+    free(norm_buf);
+    free(norm_ptrs);
+    free(norm_lens);
+    return ok;
 }

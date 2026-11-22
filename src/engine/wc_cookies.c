@@ -58,6 +58,32 @@ bool wc_cookie_normalize_domain(const char *in, char *out, size_t cap) {
     return true;
 }
 
+static bool norm_domain_matches_one(const char *nh, size_t hlen, const char *np, size_t plen) {
+    if (plen == 0) return false;
+    if (hlen == plen && strcmp(nh, np) == 0) return true;
+    if (hlen > plen && nh[hlen - plen - 1] == '.' && strcmp(nh + (hlen - plen), np) == 0) {
+        return true;
+    }
+    return false;
+}
+
+bool wc_cookie_domain_allowed_norm(const char *host_key, const char *const *norm_allowlist,
+                                   const size_t *allow_lens, int count) {
+    if (!host_key || !host_key[0] || !norm_allowlist || count <= 0) return false;
+
+    char nh[192];
+    if (!wc_cookie_normalize_domain(host_key, nh, sizeof nh)) return false;
+    size_t hlen = strlen(nh);
+
+    for (int i = 0; i < count; i++) {
+        const char *np = norm_allowlist[i];
+        if (!np || !np[0]) continue;
+        size_t plen = allow_lens ? allow_lens[i] : strlen(np);
+        if (norm_domain_matches_one(nh, hlen, np, plen)) return true;
+    }
+    return false;
+}
+
 bool wc_cookie_domain_allowed(const char *host_key, const char *const *allowlist, int count) {
     if (!host_key || !host_key[0] || !allowlist || count <= 0) return false;
 
@@ -69,13 +95,7 @@ bool wc_cookie_domain_allowed(const char *host_key, const char *const *allowlist
         if (!allowlist[i] || !allowlist[i][0]) continue;
         char np[192];
         if (!wc_cookie_normalize_domain(allowlist[i], np, sizeof np)) continue;
-        size_t plen = strlen(np);
-
-        if (hlen == plen && strcmp(nh, np) == 0) return true;
-        if (hlen > plen && nh[hlen - plen - 1] == '.' &&
-            strcmp(nh + (hlen - plen), np) == 0) {
-            return true;
-        }
+        if (norm_domain_matches_one(nh, hlen, np, strlen(np))) return true;
     }
     return false;
 }

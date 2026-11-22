@@ -24,7 +24,9 @@ typedef enum wc_category {
 
 typedef enum wc_target_kind {
     WC_TARGET_DIR_CONTENTS = 0,
-    WC_TARGET_RECYCLE_BIN = 1
+    WC_TARGET_RECYCLE_BIN = 1,
+    WC_TARGET_THUMB_CACHE = 2,
+    WC_TARGET_FIREFOX_PROFILES = 3
 } wc_target_kind;
 
 typedef enum wc_job_kind {

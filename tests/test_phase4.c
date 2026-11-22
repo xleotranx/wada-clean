@@ -135,6 +135,12 @@ static void test_cookie_domain_matcher(void) {
     CHECK(wc_cookie_domain_allowed("api.GITHUB.com", allow, 2));
     CHECK(!wc_cookie_domain_allowed("notgoogle.com", allow, 2));
     CHECK(!wc_cookie_domain_allowed("tracker.adnetwork.example", allow, 2));
+
+    const size_t allow_lens[2] = {strlen(allow[0]), strlen(allow[1])};
+    CHECK(wc_cookie_domain_allowed_norm("google.com", allow, allow_lens, 2));
+    CHECK(wc_cookie_domain_allowed_norm(".accounts.google.com", allow, allow_lens, 2));
+    CHECK(wc_cookie_domain_allowed_norm("api.GITHUB.com", allow, NULL, 2));
+    CHECK(!wc_cookie_domain_allowed_norm("notgoogle.com", allow, allow_lens, 2));
 }
 
 static void test_cookie_allowlist_store(const char *root) {

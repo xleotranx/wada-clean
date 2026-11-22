@@ -19,6 +19,9 @@ bool wc_plat_get_env(const char *name, char *out, size_t cap);
 bool wc_plat_is_admin(void);
 bool wc_plat_relaunch_as_admin(void);
 bool wc_plat_process_running(const char *exe_name);
+/* Checks which of `exe_names[0..count-1]` are currently running using a single
+ * OS process snapshot, writing results into `out_running[0..count-1]`. */
+void wc_plat_processes_running(const char *const *exe_names, int count, bool *out_running);
 
 /* Recycle bin */
 bool wc_plat_query_recycle_bin(uint64_t *out_files, uint64_t *out_bytes);
@@ -35,6 +38,14 @@ bool wc_plat_scan_dir_ex(const char *root, const volatile int *cancel_flag,
                          wc_exclude_fn is_excluded, void *excl_user,
                          uint64_t *out_files, uint64_t *out_bytes);
 bool wc_plat_clean_dir_ex(const char *root, bool dry_run, const volatile int *cancel_flag,
+                          wc_exclude_fn is_excluded, void *excl_user,
+                          uint64_t *out_files, uint64_t *out_bytes, uint64_t *out_skipped);
+bool wc_plat_scan_target(wc_target_kind kind, const char *root,
+                         const volatile int *cancel_flag,
+                         wc_exclude_fn is_excluded, void *excl_user,
+                         uint64_t *out_files, uint64_t *out_bytes);
+bool wc_plat_clean_target(wc_target_kind kind, const char *root, bool dry_run,
+                          const volatile int *cancel_flag,
                           wc_exclude_fn is_excluded, void *excl_user,
                           uint64_t *out_files, uint64_t *out_bytes, uint64_t *out_skipped);
 

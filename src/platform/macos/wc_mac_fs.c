@@ -49,9 +49,15 @@ static bool prepare_root(const char *root, char *norm_root, size_t cap, bool *ou
     return true;
 }
 
-static bool walk_dir(const char *root, const char *dir, bool clean, bool dry_run,
-                     const volatile int *cancel_flag, wc_exclude_fn is_excluded, void *excl_user,
-                     uint64_t *files, uint64_t *bytes, uint64_t *skipped, int depth) {
+static bool is_safe_component_posix(const char *name) {
+    if (!name || !name[0]) return false;
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return false;
+    return strchr(name, '/') == NULL;
+}
+
+static bool walk_dir(const char *dir, bool clean, bool dry_run, const volatile int *cancel_flag,
+                     wc_exclude_fn is_excluded, void *excl_user, uint64_t *files, uint64_t *bytes,
+                     uint64_t *skipped, int depth) {
     if (depth > WC_WALK_MAX_DEPTH) return true;
     if (cancel_flag && *cancel_flag) return false;
 
@@ -70,13 +76,13 @@ static bool walk_dir(const char *root, const char *dir, bool clean, bool dry_run
             break;
         }
         if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) continue;
-
-        char child[WC_PATH_CAP];
-        if (!join_child_posix(child, sizeof child, dir, de->d_name)) {
+        if (!is_safe_component_posix(de->d_name)) {
             if (skipped) (*skipped)++;
             continue;
         }
-        if (!wc_safety_path_within(root, child)) {
+
+        char child[WC_PATH_CAP];
+        if (!join_child_posix(child, sizeof child, dir, de->d_name)) {
             if (skipped) (*skipped)++;
             continue;
         }
@@ -93,8 +99,8 @@ static bool walk_dir(const char *root, const char *dir, bool clean, bool dry_run
         if (S_ISLNK(st.st_mode)) continue;
 
         if (S_ISDIR(st.st_mode)) {
-            if (!walk_dir(root, child, clean, dry_run, cancel_flag, is_excluded, excl_user,
-                          files, bytes, skipped, depth + 1)) {
+            if (!walk_dir(child, clean, dry_run, cancel_flag, is_excluded, excl_user, files,
+                          bytes, skipped, depth + 1)) {
                 ok = false;
                 break;
             }
@@ -121,11 +127,121 @@ static bool walk_dir(const char *root, const char *dir, bool clean, bool dry_run
     return ok;
 }
 
-bool wc_plat_scan_dir_ex(const char *root, const volatile int *cancel_flag,
-                         wc_exclude_fn is_excluded, void *excl_user,
-                         uint64_t *out_files, uint64_t *out_bytes) {
+static bool walk_thumb_cache(const char *dir, bool clean, bool dry_run,
+                             const volatile int *cancel_flag, wc_exclude_fn is_excluded,
+                             void *excl_user, uint64_t *files, uint64_t *bytes, uint64_t *skipped) {
+    if (cancel_flag && *cancel_flag) return false;
+
+    DIR *dp = opendir(dir);
+    if (!dp) {
+        if (errno == EACCES || errno == EPERM) return false;
+        if (skipped) (*skipped)++;
+        return true;
+    }
+
+    bool ok = true;
+    struct dirent *de;
+    while ((de = readdir(dp)) != NULL) {
+        if (cancel_flag && *cancel_flag) {
+            ok = false;
+            break;
+        }
+        if (!is_safe_component_posix(de->d_name)) continue;
+        if (!wc_safety_is_thumbcache_file(de->d_name)) continue;
+
+        char child[WC_PATH_CAP];
+        if (!join_child_posix(child, sizeof child, dir, de->d_name)) {
+            if (skipped) (*skipped)++;
+            continue;
+        }
+        if (is_excluded && is_excluded(child, excl_user)) continue;
+
+        struct stat st;
+        if (lstat(child, &st) != 0) {
+            if (skipped) (*skipped)++;
+            continue;
+        }
+        if (S_ISLNK(st.st_mode) || !S_ISREG(st.st_mode)) continue;
+
+        uint64_t sz = st.st_size > 0 ? (uint64_t)st.st_size : 0;
+        if (!clean || dry_run) {
+            if (files) (*files)++;
+            if (bytes) (*bytes) += sz;
+        } else if (unlink(child) == 0) {
+            if (files) (*files)++;
+            if (bytes) (*bytes) += sz;
+        } else {
+            if (skipped) (*skipped)++;
+        }
+    }
+
+    closedir(dp);
+    return ok;
+}
+
+static bool walk_firefox_profiles(const char *dir, bool clean, bool dry_run,
+                                  const volatile int *cancel_flag, wc_exclude_fn is_excluded,
+                                  void *excl_user, uint64_t *files, uint64_t *bytes,
+                                  uint64_t *skipped) {
+    if (cancel_flag && *cancel_flag) return false;
+
+    DIR *dp = opendir(dir);
+    if (!dp) {
+        if (errno == EACCES || errno == EPERM) return false;
+        if (skipped) (*skipped)++;
+        return true;
+    }
+
+    static const char *const cache_subdirs[] = {"cache2", "startupCache", "jumpListCache"};
+
+    bool ok = true;
+    struct dirent *de;
+    while ((de = readdir(dp)) != NULL) {
+        if (cancel_flag && *cancel_flag) {
+            ok = false;
+            break;
+        }
+        if (!is_safe_component_posix(de->d_name)) continue;
+
+        char prof[WC_PATH_CAP];
+        if (!join_child_posix(prof, sizeof prof, dir, de->d_name)) {
+            if (skipped) (*skipped)++;
+            continue;
+        }
+        if (is_excluded && is_excluded(prof, excl_user)) continue;
+
+        struct stat st;
+        if (lstat(prof, &st) != 0) continue;
+        if (S_ISLNK(st.st_mode) || !S_ISDIR(st.st_mode)) continue;
+
+        for (size_t s = 0; s < sizeof cache_subdirs / sizeof cache_subdirs[0]; s++) {
+            char sub[WC_PATH_CAP];
+            if (!join_child_posix(sub, sizeof sub, prof, cache_subdirs[s])) continue;
+            if (is_excluded && is_excluded(sub, excl_user)) continue;
+
+            struct stat sst;
+            if (lstat(sub, &sst) != 0) continue;
+            if (S_ISLNK(sst.st_mode) || !S_ISDIR(sst.st_mode)) continue;
+
+            if (!walk_dir(sub, clean, dry_run, cancel_flag, is_excluded, excl_user, files, bytes,
+                          skipped, 1)) {
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) break;
+    }
+
+    closedir(dp);
+    return ok;
+}
+
+bool wc_plat_scan_target(wc_target_kind kind, const char *root, const volatile int *cancel_flag,
+                         wc_exclude_fn is_excluded, void *excl_user, uint64_t *out_files,
+                         uint64_t *out_bytes) {
     if (out_files) *out_files = 0;
     if (out_bytes) *out_bytes = 0;
+    if (kind == WC_TARGET_RECYCLE_BIN) return false;
 
     char norm_root[WC_PATH_CAP];
     bool missing = false;
@@ -133,19 +249,30 @@ bool wc_plat_scan_dir_ex(const char *root, const volatile int *cancel_flag,
     if (missing) return true;
 
     uint64_t files = 0, bytes = 0;
-    bool ok = walk_dir(norm_root, norm_root, false, false, cancel_flag, is_excluded, excl_user,
-                       &files, &bytes, NULL, 0);
+    bool ok = false;
+    if (kind == WC_TARGET_THUMB_CACHE) {
+        ok = walk_thumb_cache(norm_root, false, false, cancel_flag, is_excluded, excl_user, &files,
+                              &bytes, NULL);
+    } else if (kind == WC_TARGET_FIREFOX_PROFILES) {
+        ok = walk_firefox_profiles(norm_root, false, false, cancel_flag, is_excluded, excl_user,
+                                   &files, &bytes, NULL);
+    } else {
+        ok = walk_dir(norm_root, false, false, cancel_flag, is_excluded, excl_user, &files, &bytes,
+                      NULL, 0);
+    }
     if (out_files) *out_files = files;
     if (out_bytes) *out_bytes = bytes;
     return ok;
 }
 
-bool wc_plat_clean_dir_ex(const char *root, bool dry_run, const volatile int *cancel_flag,
-                          wc_exclude_fn is_excluded, void *excl_user,
-                          uint64_t *out_files, uint64_t *out_bytes, uint64_t *out_skipped) {
+bool wc_plat_clean_target(wc_target_kind kind, const char *root, bool dry_run,
+                          const volatile int *cancel_flag, wc_exclude_fn is_excluded,
+                          void *excl_user, uint64_t *out_files, uint64_t *out_bytes,
+                          uint64_t *out_skipped) {
     if (out_files) *out_files = 0;
     if (out_bytes) *out_bytes = 0;
     if (out_skipped) *out_skipped = 0;
+    if (kind == WC_TARGET_RECYCLE_BIN) return false;
 
     char norm_root[WC_PATH_CAP];
     bool missing = false;
@@ -153,12 +280,35 @@ bool wc_plat_clean_dir_ex(const char *root, bool dry_run, const volatile int *ca
     if (missing) return true;
 
     uint64_t files = 0, bytes = 0, skipped = 0;
-    bool ok = walk_dir(norm_root, norm_root, true, dry_run, cancel_flag, is_excluded, excl_user,
-                       &files, &bytes, &skipped, 0);
+    bool ok = false;
+    if (kind == WC_TARGET_THUMB_CACHE) {
+        ok = walk_thumb_cache(norm_root, true, dry_run, cancel_flag, is_excluded, excl_user, &files,
+                              &bytes, &skipped);
+    } else if (kind == WC_TARGET_FIREFOX_PROFILES) {
+        ok = walk_firefox_profiles(norm_root, true, dry_run, cancel_flag, is_excluded, excl_user,
+                                   &files, &bytes, &skipped);
+    } else {
+        ok = walk_dir(norm_root, true, dry_run, cancel_flag, is_excluded, excl_user, &files, &bytes,
+                      &skipped, 0);
+    }
     if (out_files) *out_files = files;
     if (out_bytes) *out_bytes = bytes;
     if (out_skipped) *out_skipped = skipped;
     return ok;
+}
+
+bool wc_plat_scan_dir_ex(const char *root, const volatile int *cancel_flag,
+                         wc_exclude_fn is_excluded, void *excl_user,
+                         uint64_t *out_files, uint64_t *out_bytes) {
+    return wc_plat_scan_target(WC_TARGET_DIR_CONTENTS, root, cancel_flag, is_excluded, excl_user,
+                               out_files, out_bytes);
+}
+
+bool wc_plat_clean_dir_ex(const char *root, bool dry_run, const volatile int *cancel_flag,
+                          wc_exclude_fn is_excluded, void *excl_user,
+                          uint64_t *out_files, uint64_t *out_bytes, uint64_t *out_skipped) {
+    return wc_plat_clean_target(WC_TARGET_DIR_CONTENTS, root, dry_run, cancel_flag, is_excluded,
+                                excl_user, out_files, out_bytes, out_skipped);
 }
 
 bool wc_plat_scan_dir(const char *root, const volatile int *cancel_flag,

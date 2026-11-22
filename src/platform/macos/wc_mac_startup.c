@@ -21,16 +21,36 @@ static bool ends_with(const char *s, const char *suffix) {
 static bool plist_has_disabled_true(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return false;
-    char buf[4096];
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return false;
+    }
+    long fsz = ftell(f);
+    if (fsz <= 0 || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return false;
+    }
+    const long max_sz = 256L * 1024L;
+    size_t cap = (size_t)(fsz > max_sz ? max_sz : fsz);
+    char *buf = (char *)malloc(cap + 1);
+    if (!buf) {
+        fclose(f);
+        return false;
+    }
+    size_t n = fread(buf, 1, cap, f);
     fclose(f);
     buf[n] = '\0';
 
+    bool disabled = false;
     const char *k = strstr(buf, "<key>Disabled</key>");
-    if (!k) return false;
-    k += strlen("<key>Disabled</key>");
-    while (*k == ' ' || *k == '\t' || *k == '\r' || *k == '\n') k++;
-    return strncmp(k, "<true/>", 7) == 0;
+    if (k) {
+        k += strlen("<key>Disabled</key>");
+        while (*k == ' ' || *k == '\t' || *k == '\r' || *k == '\n') k++;
+        disabled = (strncmp(k, "<true/>", 7) == 0);
+    }
+    free(buf);
+    return disabled;
 }
 
 static void scan_launch_agents(const char *dir, wc_startup_source src, bool needs_admin,

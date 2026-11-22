@@ -13,6 +13,7 @@ typedef struct wc_disk_worker {
     wc_thread *thread;
     volatile int cancel_flag;
     bool running;
+    bool dirty;
     char job_root[WC_PATH_CAP];
     wc_disk_snapshot snap;
 } wc_disk_worker;

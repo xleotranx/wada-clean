@@ -165,15 +165,34 @@ static void test_safety(void) {
     CHECK(!wc_safety_is_valid_target_root("C:\\Windows"));
     CHECK(!wc_safety_is_valid_target_root("c:/windows/"));
     CHECK(!wc_safety_is_valid_target_root("C:\\Windows\\System32"));
+    CHECK(!wc_safety_is_valid_target_root("C:\\Windows\\System32\\drivers"));
+    CHECK(!wc_safety_is_valid_target_root("C:\\Windows\\SysWOW64\\en-US"));
+    CHECK(!wc_safety_is_valid_target_root("C:\\Windows\\WinSxS"));
+    CHECK(!wc_safety_is_valid_target_root("C:\\Windows\\WinSxS\\Backup"));
     CHECK(!wc_safety_is_valid_target_root("C:\\Users"));
     CHECK(!wc_safety_is_valid_target_root("C:\\Users\\alice"));
     CHECK(!wc_safety_is_valid_target_root("C:\\Program Files"));
+    CHECK(!wc_safety_is_valid_target_root("C:\\Program Files\\Common Files"));
     CHECK(!wc_safety_is_valid_target_root("C:\\Program Files (x86)"));
+    CHECK(!wc_safety_is_valid_target_root("C:\\Program Files (x86)\\Vendor"));
     CHECK(!wc_safety_is_valid_target_root("C:\\ProgramData"));
 
     /* Legitimate deeper roots must be accepted. */
     CHECK(wc_safety_is_valid_target_root("C:\\Windows\\Temp"));
+    CHECK(wc_safety_is_valid_target_root("C:\\Windows\\SoftwareDistribution\\Download"));
     CHECK(wc_safety_is_valid_target_root("C:\\Users\\alice\\AppData\\Local\\Temp"));
+
+    /* Thumbcache / iconcache filename checks. */
+    CHECK(wc_safety_is_thumbcache_file("thumbcache_256.db"));
+    CHECK(wc_safety_is_thumbcache_file("THUMBCACHE_IDX.DB"));
+    CHECK(wc_safety_is_thumbcache_file("iconcache_32.db"));
+    CHECK(!wc_safety_is_thumbcache_file(NULL));
+    CHECK(!wc_safety_is_thumbcache_file(""));
+    CHECK(!wc_safety_is_thumbcache_file("explorer.db"));
+    CHECK(!wc_safety_is_thumbcache_file("settings.ini"));
+    CHECK(!wc_safety_is_thumbcache_file("sub\\thumbcache_256.db"));
+    CHECK(!wc_safety_is_thumbcache_file("sub/thumbcache_256.db"));
+    CHECK(!wc_safety_is_thumbcache_file("thumbcache_256.db.bak"));
 
     /* Path containment checks. */
     const char *root = "C:\\Users\\alice\\AppData\\Local\\Temp";
@@ -350,6 +369,89 @@ static void test_worker_async(const char *root) {
     wc_worker_destroy(&w);
 }
 
+static void test_scoped_targets(const char *root) {
+    /* 1. Thumbnail cache: delete only top-level thumbcache_*.db / iconcache_*.db */
+    char thumb_dir[WC_PATH_CAP], thumb_sub[WC_PATH_CAP];
+    char ft1[WC_PATH_CAP], ft2[WC_PATH_CAP], fkeep1[WC_PATH_CAP], fkeep2[WC_PATH_CAP];
+    CHECK(join_path(thumb_dir, sizeof thumb_dir, root, "thumb_test"));
+    CHECK(join_path(thumb_sub, sizeof thumb_sub, thumb_dir, "sub"));
+    CHECK(join_path(ft1, sizeof ft1, thumb_dir, "thumbcache_256.db"));
+    CHECK(join_path(ft2, sizeof ft2, thumb_dir, "iconcache_32.db"));
+    CHECK(join_path(fkeep1, sizeof fkeep1, thumb_dir, "explorer_settings.ini"));
+    CHECK(join_path(fkeep2, sizeof fkeep2, thumb_sub, "thumbcache_96.db"));
+
+    CHECK(make_dir_utf8(thumb_dir));
+    CHECK(make_dir_utf8(thumb_sub));
+    CHECK(write_bytes_utf8(ft1, 100, 0));
+    CHECK(write_bytes_utf8(ft2, 50, 0));
+    CHECK(write_bytes_utf8(fkeep1, 200, 0));
+    CHECK(write_bytes_utf8(fkeep2, 75, 0));
+
+    volatile int cancel = 0;
+    uint64_t files = 0, bytes = 0, skipped = 0;
+    CHECK(wc_plat_scan_target(WC_TARGET_THUMB_CACHE, thumb_dir, &cancel, NULL, NULL, &files,
+                              &bytes));
+    CHECK(files == 2);
+    CHECK(bytes == 150);
+
+    CHECK(wc_plat_clean_target(WC_TARGET_THUMB_CACHE, thumb_dir, false, &cancel, NULL, NULL,
+                               &files, &bytes, &skipped));
+    CHECK(files == 2);
+    CHECK(bytes == 150);
+    CHECK(skipped == 0);
+    CHECK(!file_exists_utf8(ft1));
+    CHECK(!file_exists_utf8(ft2));
+    CHECK(file_exists_utf8(fkeep1));
+    CHECK(file_exists_utf8(fkeep2));
+
+    /* 2. Firefox profiles: delete only cache2/startupCache/jumpListCache contents */
+    char ff_dir[WC_PATH_CAP], prof[WC_PATH_CAP], cache2[WC_PATH_CAP], entries[WC_PATH_CAP];
+    char startup[WC_PATH_CAP], fc1[WC_PATH_CAP], fc2[WC_PATH_CAP], fplaces[WC_PATH_CAP];
+    char fprefs[WC_PATH_CAP];
+    CHECK(join_path(ff_dir, sizeof ff_dir, root, "ff_profiles"));
+    CHECK(join_path(prof, sizeof prof, ff_dir, "abc.default-release"));
+    CHECK(join_path(cache2, sizeof cache2, prof, "cache2"));
+    CHECK(join_path(entries, sizeof entries, cache2, "entries"));
+    CHECK(join_path(startup, sizeof startup, prof, "startupCache"));
+    CHECK(join_path(fc1, sizeof fc1, entries, "item1"));
+    CHECK(join_path(fc2, sizeof fc2, startup, "sc.bin"));
+    CHECK(join_path(fplaces, sizeof fplaces, prof, "places.sqlite"));
+    CHECK(join_path(fprefs, sizeof fprefs, prof, "prefs.js"));
+
+    CHECK(make_dir_utf8(ff_dir));
+    CHECK(make_dir_utf8(prof));
+    CHECK(make_dir_utf8(cache2));
+    CHECK(make_dir_utf8(entries));
+    CHECK(make_dir_utf8(startup));
+    CHECK(write_bytes_utf8(fc1, 120, 0));
+    CHECK(write_bytes_utf8(fc2, 80, 0));
+    CHECK(write_bytes_utf8(fplaces, 500, 0));
+    CHECK(write_bytes_utf8(fprefs, 40, 0));
+
+    CHECK(wc_plat_scan_target(WC_TARGET_FIREFOX_PROFILES, ff_dir, &cancel, NULL, NULL, &files,
+                              &bytes));
+    CHECK(files == 2);
+    CHECK(bytes == 200);
+
+    CHECK(wc_plat_clean_target(WC_TARGET_FIREFOX_PROFILES, ff_dir, false, &cancel, NULL, NULL,
+                               &files, &bytes, &skipped));
+    CHECK(files == 2);
+    CHECK(bytes == 200);
+    CHECK(skipped == 0);
+    CHECK(!file_exists_utf8(fc1));
+    CHECK(!file_exists_utf8(fc2));
+    CHECK(dir_exists_utf8(prof));
+    CHECK(file_exists_utf8(fplaces));
+    CHECK(file_exists_utf8(fprefs));
+
+    /* 3. Batch process running check */
+    const char *procs[2] = {"nonexistent_proc_xyz_123.exe", ""};
+    bool running[2] = {true, true};
+    wc_plat_processes_running(procs, 2, running);
+    CHECK(!running[0]);
+    CHECK(!running[1]);
+}
+
 int main(void) {
     char temp_base[WC_PATH_CAP];
     CHECK(wc_plat_get_env("TEMP", temp_base, sizeof temp_base));
@@ -366,6 +468,7 @@ int main(void) {
     test_fs_scan_and_clean(test_root);
     test_history(test_root);
     test_worker_async(test_root);
+    test_scoped_targets(test_root);
 
     delete_tree_for_cleanup(test_root);
 

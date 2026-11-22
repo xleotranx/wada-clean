@@ -51,7 +51,7 @@ static void approved_location(wc_startup_source src, HKEY *hive, const wchar_t *
     }
 }
 
-static bool query_startup_approved(wc_startup_source src, const wchar_t *name) {
+static HKEY open_approved_key(wc_startup_source src) {
     HKEY hive = NULL;
     const wchar_t *subkey = NULL;
     REGSAM wow64 = 0;
@@ -59,19 +59,21 @@ static bool query_startup_approved(wc_startup_source src, const wchar_t *name) {
 
     HKEY hk = NULL;
     if (RegOpenKeyExW(hive, subkey, 0, KEY_READ | wow64, &hk) != ERROR_SUCCESS) {
-        return true;
+        return NULL;
     }
+    return hk;
+}
 
+static bool query_startup_approved_key(HKEY hk, const wchar_t *name) {
+    if (!hk) return true;
     uint8_t buf[32];
     DWORD len = (DWORD)sizeof buf;
     DWORD type = 0;
-    bool enabled = true;
     if (RegQueryValueExW(hk, name, NULL, &type, buf, &len) == ERROR_SUCCESS &&
         type == REG_BINARY && len > 0) {
-        enabled = wc_startup_approved_is_enabled(buf, (size_t)len);
+        return wc_startup_approved_is_enabled(buf, (size_t)len);
     }
-    RegCloseKey(hk);
-    return enabled;
+    return true;
 }
 
 static void enum_run_key(HKEY hive, const wchar_t *subkey, REGSAM wow64, wc_startup_source src,
@@ -79,6 +81,7 @@ static void enum_run_key(HKEY hive, const wchar_t *subkey, REGSAM wow64, wc_star
     HKEY hk = NULL;
     if (RegOpenKeyExW(hive, subkey, 0, KEY_READ | wow64, &hk) != ERROR_SUCCESS) return;
 
+    HKEY approved_hk = open_approved_key(src);
     wchar_t wname[256];
     wchar_t wval[WC_PATH_CAP];
     for (DWORD idx = 0; *count < max_items; idx++) {
@@ -101,9 +104,10 @@ static void enum_run_key(HKEY hive, const wchar_t *subkey, REGSAM wow64, wc_star
         wide_to_utf8(wval, item.command, sizeof item.command);
         item.source = src;
         item.needs_admin = needs_admin;
-        item.enabled = query_startup_approved(src, wname);
+        item.enabled = query_startup_approved_key(approved_hk, wname);
         out[(*count)++] = item;
     }
+    if (approved_hk) RegCloseKey(approved_hk);
     RegCloseKey(hk);
 }
 
@@ -128,6 +132,7 @@ static void enum_startup_folder(const char *env_name, const char *rel_path, wc_s
     HANDLE h = FindFirstFileW(wpat, &ffd);
     if (h == INVALID_HANDLE_VALUE) return;
 
+    HKEY approved_hk = open_approved_key(src);
     do {
         if (*count >= max_items) break;
         if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
@@ -141,10 +146,11 @@ static void enum_startup_folder(const char *env_name, const char *rel_path, wc_s
 
         item.source = src;
         item.needs_admin = needs_admin;
-        item.enabled = query_startup_approved(src, ffd.cFileName);
+        item.enabled = query_startup_approved_key(approved_hk, ffd.cFileName);
         out[(*count)++] = item;
     } while (FindNextFileW(h, &ffd));
 
+    if (approved_hk) RegCloseKey(approved_hk);
     FindClose(h);
 }
 

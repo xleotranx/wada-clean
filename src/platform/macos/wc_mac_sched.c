@@ -66,6 +66,49 @@ bool wc_plat_schedule_query(wc_schedule_info *out) {
     return true;
 }
 
+static bool xml_escape_str(const char *in, char *out, size_t cap) {
+    if (!in || !out || cap == 0) return false;
+    size_t pos = 0;
+    for (const char *p = in; *p; p++) {
+        const char *rep = NULL;
+        size_t rlen = 0;
+        switch (*p) {
+        case '&':
+            rep = "&amp;";
+            rlen = 5;
+            break;
+        case '<':
+            rep = "&lt;";
+            rlen = 4;
+            break;
+        case '>':
+            rep = "&gt;";
+            rlen = 4;
+            break;
+        case '"':
+            rep = "&quot;";
+            rlen = 6;
+            break;
+        case '\'':
+            rep = "&apos;";
+            rlen = 6;
+            break;
+        default:
+            break;
+        }
+        if (rep) {
+            if (pos + rlen >= cap) return false;
+            memcpy(out + pos, rep, rlen);
+            pos += rlen;
+        } else {
+            if (pos + 1 >= cap) return false;
+            out[pos++] = *p;
+        }
+    }
+    out[pos] = '\0';
+    return true;
+}
+
 bool wc_plat_schedule_set(wc_schedule_freq freq, int hour, int minute) {
     if (hour < 0) hour = 0;
     if (hour > 23) hour = 23;
@@ -92,6 +135,9 @@ bool wc_plat_schedule_set(wc_schedule_freq freq, int hour, int minute) {
     uint32_t exe_sz = (uint32_t)sizeof exe;
     if (_NSGetExecutablePath(exe, &exe_sz) != 0) return false;
 
+    char esc_exe[WC_PATH_CAP * 2];
+    if (!xml_escape_str(exe, esc_exe, sizeof esc_exe)) return false;
+
     (void)run_launchctl("unload", plist);
 
     FILE *f = fopen(plist, "wb");
@@ -108,7 +154,7 @@ bool wc_plat_schedule_set(wc_schedule_freq freq, int hour, int minute) {
             "  <array><string>%s</string><string>--scheduled-clean</string></array>\n"
             "  <key>StartCalendarInterval</key>\n"
             "  <dict>\n",
-            exe);
+            esc_exe);
     if (freq == WC_SCHED_WEEKLY) {
         fprintf(f, "    <key>Weekday</key><integer>0</integer>\n");
     }

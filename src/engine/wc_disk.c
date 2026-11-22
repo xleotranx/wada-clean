@@ -49,6 +49,7 @@ static void disk_progress_cb(const char *current_dir, uint64_t files, uint64_t b
     }
     w->snap.total_files = files;
     w->snap.total_bytes = bytes;
+    w->dirty = true;
     wc_mutex_unlock(w->mu);
 }
 
@@ -66,6 +67,7 @@ static void disk_worker_entry(void *user) {
         w->snap.state = WC_JOB_ERROR;
         snprintf(w->snap.error_msg, sizeof w->snap.error_msg, "Out of memory");
         w->running = false;
+        w->dirty = true;
         wc_mutex_unlock(w->mu);
         return;
     }
@@ -87,6 +89,7 @@ static void disk_worker_entry(void *user) {
     result->current_dir[0] = '\0';
     w->snap = *result;
     w->running = false;
+    w->dirty = true;
     wc_mutex_unlock(w->mu);
 
     free(result);
@@ -98,6 +101,7 @@ bool wc_disk_worker_init(wc_disk_worker *w) {
     w->mu = wc_mutex_create();
     if (!w->mu) return false;
     w->snap.state = WC_JOB_IDLE;
+    w->dirty = true;
     return true;
 }
 
@@ -146,12 +150,14 @@ bool wc_disk_worker_start(wc_disk_worker *w, const char *root_path) {
     w->snap.state = WC_JOB_RUNNING;
     w->cancel_flag = 0;
     w->running = true;
+    w->dirty = true;
 
     wc_thread *t = wc_thread_start(disk_worker_entry, w);
     if (!t) {
         w->running = false;
         w->snap.state = WC_JOB_ERROR;
         snprintf(w->snap.error_msg, sizeof w->snap.error_msg, "Failed to start worker thread");
+        w->dirty = true;
         wc_mutex_unlock(w->mu);
         return false;
     }
@@ -173,9 +179,13 @@ bool wc_disk_worker_poll(wc_disk_worker *w, wc_disk_snapshot *out) {
     if (!w->running && w->thread) {
         done_thread = w->thread;
         w->thread = NULL;
+        w->dirty = true;
     }
     bool running = w->running;
-    if (out) *out = w->snap;
+    if (out && (running || w->dirty || out->state != w->snap.state)) {
+        *out = w->snap;
+        if (!running) w->dirty = false;
+    }
     wc_mutex_unlock(w->mu);
 
     if (done_thread) wc_thread_join(done_thread);

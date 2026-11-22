@@ -105,6 +105,7 @@ bool wc_safety_is_valid_target_root(const char *root) {
             "Windows",
             "Windows\\System32",
             "Windows\\SysWOW64",
+            "Windows\\WinSxS",
             "Users",
             "Program Files",
             "Program Files (x86)",
@@ -112,6 +113,18 @@ bool wc_safety_is_valid_target_root(const char *root) {
         };
         for (size_t i = 0; i < sizeof protected_rel / sizeof protected_rel[0]; i++) {
             if (ascii_strcasecmp(rel, protected_rel[i]) == 0) return false;
+        }
+
+        static const char *const protected_prefixes[] = {
+            "Program Files\\",
+            "Program Files (x86)\\",
+            "Windows\\System32\\",
+            "Windows\\SysWOW64\\",
+            "Windows\\WinSxS\\",
+        };
+        for (size_t i = 0; i < sizeof protected_prefixes / sizeof protected_prefixes[0]; i++) {
+            size_t plen = strlen(protected_prefixes[i]);
+            if (ascii_strncasecmp(rel, protected_prefixes[i], plen) == 0) return false;
         }
 
         /* Forbid wiping an entire user profile root like "C:\Users\alice". */
@@ -147,7 +160,21 @@ bool wc_safety_is_valid_target_root(const char *root) {
         for (size_t i = 0; i < sizeof protected_posix / sizeof protected_posix[0]; i++) {
             if (ascii_strcasecmp(norm, protected_posix[i]) == 0) return false;
         }
-        if (ascii_strncasecmp(norm, "/System/", 8) == 0) return false;
+        static const char *const protected_posix_prefixes[] = {
+            "/System/",
+            "/Applications/",
+            "/bin/",
+            "/sbin/",
+            "/usr/",
+            "/etc/",
+            "/private/etc/",
+            "/dev/",
+        };
+        for (size_t i = 0; i < sizeof protected_posix_prefixes / sizeof protected_posix_prefixes[0];
+             i++) {
+            size_t plen = strlen(protected_posix_prefixes[i]);
+            if (ascii_strncasecmp(norm, protected_posix_prefixes[i], plen) == 0) return false;
+        }
 
         /* Forbid wiping an entire home folder like "/Users/alice" or "/home/alice". */
         if (ascii_strncasecmp(norm, "/Users/", 7) == 0) {
@@ -178,6 +205,18 @@ bool wc_safety_path_within(const char *root, const char *candidate) {
     if (ascii_strncasecmp(nc, nr, rlen) != 0) return false;
     if (nc[rlen] != sep) return false;
     return nc[rlen + 1] != '\0';
+}
+
+bool wc_safety_is_thumbcache_file(const char *filename) {
+    if (!filename || !filename[0]) return false;
+    for (const char *p = filename; *p; p++) {
+        if (*p == '/' || *p == '\\') return false;
+    }
+    size_t len = strlen(filename);
+    if (len <= 3 || ascii_strcasecmp(filename + len - 3, ".db") != 0) return false;
+    if (len >= 14 && ascii_strncasecmp(filename, "thumbcache_", 11) == 0) return true;
+    if (len >= 13 && ascii_strncasecmp(filename, "iconcache_", 10) == 0) return true;
+    return false;
 }
 
 void wc_format_bytes(uint64_t bytes, char *out, size_t cap) {

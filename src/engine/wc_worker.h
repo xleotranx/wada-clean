@@ -11,6 +11,7 @@ typedef struct wc_worker {
     wc_thread *thread;
     volatile int cancel_flag;
     bool running;
+    bool dirty;
 
     wc_target_def job_defs[WC_MAX_TARGETS];
     bool job_selected[WC_MAX_TARGETS];

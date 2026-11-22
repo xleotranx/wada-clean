@@ -120,6 +120,13 @@ static void test_exclusion_matching(void) {
     CHECK(wc_exclusion_matches("C:\\Temp\\important.log", patterns, 2));
     CHECK(!wc_exclusion_matches("C:\\Temp\\keep_dir2\\file.txt", patterns, 2));
     CHECK(!wc_exclusion_matches("C:\\Temp\\other.tmp", patterns, 2));
+
+    const size_t lens[2] = {strlen(patterns[0]), strlen(patterns[1])};
+    CHECK(wc_exclusion_matches_norm("C:\\Temp\\keep_dir", patterns, lens, 2));
+    CHECK(wc_exclusion_matches_norm("c:\\temp\\KEEP_DIR\\sub\\file.txt", patterns, lens, 2));
+    CHECK(wc_exclusion_matches_norm("C:\\Temp\\important.log", patterns, NULL, 2));
+    CHECK(!wc_exclusion_matches_norm("C:\\Temp\\keep_dir2\\file.txt", patterns, lens, 2));
+    CHECK(!wc_exclusion_matches_norm("C:\\Temp\\other.tmp", patterns, lens, 2));
 }
 
 static void test_exclusions_store(const char *root) {

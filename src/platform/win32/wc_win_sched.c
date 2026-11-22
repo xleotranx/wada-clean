@@ -27,9 +27,17 @@ static bool run_schtasks(const wchar_t *args, char *out_buf, size_t out_cap, DWO
     if (out_buf && out_cap > 0) out_buf[0] = '\0';
     if (out_code) *out_code = 1;
 
+    wchar_t sys_dir[WC_PATH_CAP];
+    UINT slen = GetSystemDirectoryW(sys_dir, WC_PATH_CAP);
+    if (slen == 0 || slen >= WC_PATH_CAP) return false;
+
+    wchar_t schtasks_path[WC_PATH_CAP];
+    int sn = _snwprintf(schtasks_path, WC_PATH_CAP, L"%ls\\schtasks.exe", sys_dir);
+    if (sn <= 0 || sn >= WC_PATH_CAP) return false;
+
     wchar_t wcmd[1024];
-    _snwprintf(wcmd, 1024, L"schtasks.exe %ls", args);
-    wcmd[1023] = L'\0';
+    int cn = _snwprintf(wcmd, 1024, L"\"%ls\" %ls", schtasks_path, args);
+    if (cn <= 0 || cn >= 1024) return false;
 
     SECURITY_ATTRIBUTES sa;
     memset(&sa, 0, sizeof sa);
@@ -37,7 +45,7 @@ static bool run_schtasks(const wchar_t *args, char *out_buf, size_t out_cap, DWO
     sa.bInheritHandle = TRUE;
 
     HANDLE rpipe = NULL, wpipe = NULL;
-    if (!CreatePipe(&rpipe, &wpipe, &sa, 0)) return false;
+    if (!CreatePipe(&rpipe, &wpipe, &sa, 65536)) return false;
     SetHandleInformation(rpipe, HANDLE_FLAG_INHERIT, 0);
 
     STARTUPINFOW si;
@@ -50,7 +58,8 @@ static bool run_schtasks(const wchar_t *args, char *out_buf, size_t out_cap, DWO
     si.hStdOutput = wpipe;
     si.hStdError = wpipe;
 
-    BOOL ok = CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    BOOL ok = CreateProcessW(schtasks_path, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL,
+                             &si, &pi);
     CloseHandle(wpipe);
     if (!ok) {
         CloseHandle(rpipe);
@@ -59,12 +68,14 @@ static bool run_schtasks(const wchar_t *args, char *out_buf, size_t out_cap, DWO
 
     size_t pos = 0;
     for (;;) {
+        bool got_data = false;
         DWORD avail = 0;
         while (PeekNamedPipe(rpipe, NULL, 0, NULL, &avail, NULL) && avail > 0) {
             char tmp[1024];
             DWORD to_read = avail < sizeof tmp ? avail : (DWORD)sizeof tmp;
             DWORD got = 0;
             if (!ReadFile(rpipe, tmp, to_read, &got, NULL) || got == 0) break;
+            got_data = true;
             if (out_buf && out_cap > 1 && pos < out_cap - 1) {
                 size_t cp = got;
                 if (pos + cp >= out_cap) cp = (out_cap - 1) - pos;
@@ -72,7 +83,7 @@ static bool run_schtasks(const wchar_t *args, char *out_buf, size_t out_cap, DWO
                 pos += cp;
             }
         }
-        if (WaitForSingleObject(pi.hProcess, 50) == WAIT_OBJECT_0) {
+        if (WaitForSingleObject(pi.hProcess, got_data ? 0 : 20) == WAIT_OBJECT_0) {
             while (PeekNamedPipe(rpipe, NULL, 0, NULL, &avail, NULL) && avail > 0) {
                 char tmp[1024];
                 DWORD to_read = avail < sizeof tmp ? avail : (DWORD)sizeof tmp;

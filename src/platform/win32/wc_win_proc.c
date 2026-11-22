@@ -59,29 +59,58 @@ bool wc_plat_relaunch_as_admin(void) {
     return (INT_PTR)ShellExecuteW(NULL, L"runas", wexe, NULL, NULL, SW_SHOWNORMAL) > 32;
 }
 
-bool wc_plat_process_running(const char *exe_name) {
-    if (!exe_name || !exe_name[0]) return false;
+void wc_plat_processes_running(const char *const *exe_names, int count, bool *out_running) {
+    if (!out_running || count <= 0) return;
+    for (int i = 0; i < count; i++) out_running[i] = false;
+    if (!exe_names) return;
 
-    wchar_t wexe[128];
-    int wn = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, exe_name, -1, wexe, 128);
-    if (wn <= 0 || wn > 128) return false;
+    wchar_t (*wexes)[128] = (wchar_t (*)[128])calloc((size_t)count, sizeof *wexes);
+    if (!wexes) return;
+
+    int active = 0;
+    for (int i = 0; i < count; i++) {
+        if (!exe_names[i] || !exe_names[i][0]) continue;
+        int wn = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, exe_names[i], -1, wexes[i], 128);
+        if (wn <= 0 || wn > 128) {
+            wexes[i][0] = L'\0';
+        } else {
+            active++;
+        }
+    }
+    if (active == 0) {
+        free(wexes);
+        return;
+    }
 
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return false;
+    if (snap == INVALID_HANDLE_VALUE) {
+        free(wexes);
+        return;
+    }
 
     PROCESSENTRY32W pe;
     pe.dwSize = sizeof pe;
-    bool found = false;
+    int matched = 0;
     if (Process32FirstW(snap, &pe)) {
         do {
-            if (_wcsicmp(pe.szExeFile, wexe) == 0) {
-                found = true;
-                break;
+            for (int i = 0; i < count; i++) {
+                if (!out_running[i] && wexes[i][0] && _wcsicmp(pe.szExeFile, wexes[i]) == 0) {
+                    out_running[i] = true;
+                    matched++;
+                }
             }
+            if (matched == active) break;
         } while (Process32NextW(snap, &pe));
     }
     CloseHandle(snap);
-    return found;
+    free(wexes);
+}
+
+bool wc_plat_process_running(const char *exe_name) {
+    if (!exe_name || !exe_name[0]) return false;
+    bool running = false;
+    wc_plat_processes_running(&exe_name, 1, &running);
+    return running;
 }
 
 wc_mutex *wc_mutex_create(void) {

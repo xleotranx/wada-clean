@@ -22,14 +22,18 @@
 
 typedef struct sched_excl_ctx {
     wc_exclusion_item items[WC_MAX_EXCLUSIONS];
+    char norm_paths[WC_MAX_EXCLUSIONS][WC_PATH_CAP];
     const char *ptrs[WC_MAX_EXCLUSIONS];
+    size_t lens[WC_MAX_EXCLUSIONS];
     int count;
 } sched_excl_ctx;
 
 static bool sched_is_excluded(const char *path, void *user) {
     const sched_excl_ctx *ctx = (const sched_excl_ctx *)user;
-    if (!ctx || ctx->count <= 0) return false;
-    return wc_exclusion_matches(path, ctx->ptrs, ctx->count);
+    if (!ctx || ctx->count <= 0 || !path || !path[0]) return false;
+    char norm[WC_PATH_CAP];
+    if (!wc_safety_normalize_path(path, norm, sizeof norm)) return false;
+    return wc_exclusion_matches_norm(norm, ctx->ptrs, ctx->lens, ctx->count);
 }
 
 static void resolve_clean_data_dir(char *out, size_t cap) {
@@ -86,8 +90,16 @@ static int run_scheduled_clean(bool dry_run) {
     if (ectx) {
         int ec = 0;
         if (wc_exclusions_list(&ex, ectx->items, WC_MAX_EXCLUSIONS, &ec, &err) == WADA_OK) {
-            ectx->count = ec;
-            for (int i = 0; i < ec; i++) ectx->ptrs[i] = ectx->items[i].path;
+            int n = 0;
+            for (int i = 0; i < ec; i++) {
+                if (wc_safety_normalize_path(ectx->items[i].path, ectx->norm_paths[n],
+                                             sizeof ectx->norm_paths[n])) {
+                    ectx->ptrs[n] = ectx->norm_paths[n];
+                    ectx->lens[n] = strlen(ectx->norm_paths[n]);
+                    n++;
+                }
+            }
+            ectx->count = n;
         }
     }
     wc_exclude_fn excl_fn = (ectx && ectx->count > 0) ? sched_is_excluded : NULL;
@@ -98,6 +110,19 @@ static int run_scheduled_clean(bool dry_run) {
     int ran = 0;
 
     int nrules = wc_rules_count();
+    if (nrules > WC_MAX_TARGETS) nrules = WC_MAX_TARGETS;
+    const char *proc_names[WC_MAX_TARGETS];
+    bool proc_running[WC_MAX_TARGETS];
+    memset(proc_running, 0, sizeof proc_running);
+    for (int i = 0; i < nrules; i++) {
+        const wc_target_def *def = wc_rules_get(i);
+        proc_names[i] =
+            (def && def->default_enabled && (!def->needs_admin || is_admin) && def->process_name[0])
+                ? def->process_name
+                : "";
+    }
+    wc_plat_processes_running(proc_names, nrules, proc_running);
+
     for (int i = 0; i < nrules; i++) {
         const wc_target_def *def = wc_rules_get(i);
         if (!def || !def->default_enabled) continue;
@@ -114,14 +139,15 @@ static int run_scheduled_clean(bool dry_run) {
             }
             ran++;
         } else {
-            if (def->process_name[0] && wc_plat_process_running(def->process_name)) {
+            if (proc_running[i]) {
                 total_skipped++;
                 continue;
             }
             char path[WC_PATH_CAP];
             if (!wc_rules_resolve_path(def, path, sizeof path)) continue;
             uint64_t f = 0, b = 0, s = 0;
-            if (wc_plat_clean_dir_ex(path, dry_run, &cancel, excl_fn, ectx, &f, &b, &s)) {
+            if (wc_plat_clean_target(def->kind, path, dry_run, &cancel, excl_fn, ectx, &f, &b,
+                                     &s)) {
                 total_files += f;
                 total_bytes += b;
                 total_skipped += s;

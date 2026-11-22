@@ -24,5 +24,9 @@ wada_status wc_cookies_list(wc_cookies *c, wc_cookie_allow_item *out, int max_it
 /* Pure domain normalization & matching helpers. */
 bool wc_cookie_normalize_domain(const char *in, char *out, size_t cap);
 bool wc_cookie_domain_allowed(const char *host_key, const char *const *allowlist, int count);
+/* Fast domain matcher where `norm_allowlist` contains pre-normalized domains.
+ * `allow_lens` may be NULL. */
+bool wc_cookie_domain_allowed_norm(const char *host_key, const char *const *norm_allowlist,
+                                   const size_t *allow_lens, int count);
 
 #endif /* WC_COOKIES_H */

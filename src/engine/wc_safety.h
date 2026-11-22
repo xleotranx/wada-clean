@@ -21,6 +21,10 @@ bool wc_safety_is_valid_target_root(const char *root);
  * on a directory boundary, and `root` is itself a valid target root. */
 bool wc_safety_path_within(const char *root, const char *candidate);
 
+/* Returns true if `filename` (single path component) is a Windows Explorer
+ * thumbnail or icon cache database (`thumbcache_*.db` or `iconcache_*.db`). */
+bool wc_safety_is_thumbcache_file(const char *filename);
+
 /* Formats byte sizes into human-readable "B", "KB", "MB", or "GB" strings. */
 void wc_format_bytes(uint64_t bytes, char *out, size_t cap);
 

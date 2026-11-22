@@ -228,27 +228,48 @@ bool wc_plat_launch_uninstaller(const char *uninstall_cmd) {
         wcmd[WC_PATH_CAP - 1] = L'\0';
     }
 
+    wchar_t exe[WC_PATH_CAP];
+    const wchar_t *args = NULL;
+    split_cmd_exe_args(wcmd, exe, WC_PATH_CAP, &args);
+    if (!exe[0]) return false;
+
+    wchar_t resolved_exe[WC_PATH_CAP];
+    const wchar_t *app_name = NULL;
+    if (GetFileAttributesW(exe) != INVALID_FILE_ATTRIBUTES) {
+        app_name = exe;
+    } else {
+        DWORD sp = SearchPathW(NULL, exe, L".exe", WC_PATH_CAP, resolved_exe, NULL);
+        if (sp > 0 && sp < WC_PATH_CAP) {
+            app_name = resolved_exe;
+        }
+    }
+
+    wchar_t safe_cmd[WC_PATH_CAP + 32];
+    if (args && args[0]) {
+        int n = _snwprintf(safe_cmd, WC_PATH_CAP + 32, L"\"%ls\" %ls", app_name ? app_name : exe,
+                           args);
+        if (n <= 0 || n >= WC_PATH_CAP + 32) return false;
+    } else {
+        int n = _snwprintf(safe_cmd, WC_PATH_CAP + 32, L"\"%ls\"", app_name ? app_name : exe);
+        if (n <= 0 || n >= WC_PATH_CAP + 32) return false;
+    }
+
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
     memset(&si, 0, sizeof si);
     memset(&pi, 0, sizeof pi);
     si.cb = sizeof si;
 
-    if (CreateProcessW(NULL, wcmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+    if (CreateProcessW(app_name, safe_cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
         return true;
     }
 
     if (GetLastError() == ERROR_ELEVATION_REQUIRED) {
-        wchar_t exe[WC_PATH_CAP];
-        const wchar_t *args = NULL;
-        split_cmd_exe_args(wcmd, exe, WC_PATH_CAP, &args);
-        if (exe[0]) {
-            INT_PTR r = (INT_PTR)ShellExecuteW(NULL, L"runas", exe,
-                                               (args && args[0]) ? args : NULL, NULL, SW_SHOWNORMAL);
-            return r > 32;
-        }
+        INT_PTR r = (INT_PTR)ShellExecuteW(NULL, L"runas", app_name ? app_name : exe,
+                                           (args && args[0]) ? args : NULL, NULL, SW_SHOWNORMAL);
+        return r > 32;
     }
     return false;
 }

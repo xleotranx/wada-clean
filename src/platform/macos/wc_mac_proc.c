@@ -52,6 +52,27 @@ bool wc_plat_process_running(const char *exe_name) {
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+void wc_plat_processes_running(const char *const *exe_names, int count, bool *out_running) {
+    if (!out_running || count <= 0) return;
+    for (int i = 0; i < count; i++) out_running[i] = false;
+    if (!exe_names) return;
+
+    for (int i = 0; i < count; i++) {
+        if (!exe_names[i] || !exe_names[i][0]) continue;
+        bool seen = false;
+        for (int j = 0; j < i; j++) {
+            if (exe_names[j] && strcmp(exe_names[i], exe_names[j]) == 0) {
+                out_running[i] = out_running[j];
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) {
+            out_running[i] = wc_plat_process_running(exe_names[i]);
+        }
+    }
+}
+
 wc_mutex *wc_mutex_create(void) {
     wc_mutex *m = (wc_mutex *)calloc(1, sizeof *m);
     if (!m) return NULL;

@@ -233,6 +233,7 @@ static void updater_worker_entry(void *user) {
         w->snap->state = WC_JOB_ERROR;
         snprintf(w->snap->error_msg, sizeof w->snap->error_msg, "Out of memory");
         w->running = false;
+        w->dirty = true;
         wc_mutex_unlock(w->mu);
         return;
     }
@@ -277,6 +278,7 @@ static void updater_worker_entry(void *user) {
     wc_mutex_lock(w->mu);
     *w->snap = *res;
     w->running = false;
+    w->dirty = true;
     wc_mutex_unlock(w->mu);
 
     free(res);
@@ -296,6 +298,7 @@ bool wc_updater_worker_init(wc_updater_worker *w) {
     }
     w->snap->state = WC_JOB_IDLE;
     w->snap->winget_available = true;
+    w->dirty = true;
     return true;
 }
 
@@ -351,12 +354,14 @@ static bool start_updater_job(wc_updater_worker *w, wc_updater_op op, const char
 
     w->cancel_flag = 0;
     w->running = true;
+    w->dirty = true;
 
     wc_thread *t = wc_thread_start(updater_worker_entry, w);
     if (!t) {
         w->running = false;
         w->snap->state = WC_JOB_ERROR;
         snprintf(w->snap->error_msg, sizeof w->snap->error_msg, "Failed to start updater thread");
+        w->dirty = true;
         wc_mutex_unlock(w->mu);
         return false;
     }
@@ -390,9 +395,13 @@ bool wc_updater_worker_poll(wc_updater_worker *w, wc_updater_snapshot *out) {
     if (!w->running && w->thread) {
         done_thread = w->thread;
         w->thread = NULL;
+        w->dirty = true;
     }
     bool running = w->running;
-    if (out) *out = *w->snap;
+    if (out && (running || w->dirty || out->state != w->snap->state)) {
+        *out = *w->snap;
+        if (!running) w->dirty = false;
+    }
     wc_mutex_unlock(w->mu);
 
     if (done_thread) wc_thread_join(done_thread);

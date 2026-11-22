@@ -148,6 +148,34 @@ wada_status wc_exclusions_list(wc_exclusions *ex, wc_exclusion_item *out, int ma
     return st;
 }
 
+static bool norm_path_matches_one(const char *nc, size_t clen, const char *np, size_t plen) {
+    if (plen == 0) return false;
+    char sep = (np[0] == '/') ? '/' : '\\';
+    if (clen == plen && ascii_strcasecmp(nc, np) == 0) {
+        return true;
+    }
+    if (clen > plen && nc[plen] == sep && ascii_strncasecmp(nc, np, plen) == 0) {
+        return true;
+    }
+    return false;
+}
+
+bool wc_exclusion_matches_norm(const char *norm_candidate, const char *const *norm_patterns,
+                               const size_t *pattern_lens, int count) {
+    if (!norm_candidate || !norm_candidate[0] || !norm_patterns || count <= 0) return false;
+    size_t clen = strlen(norm_candidate);
+
+    for (int i = 0; i < count; i++) {
+        const char *np = norm_patterns[i];
+        if (!np || !np[0]) continue;
+        size_t plen = pattern_lens ? pattern_lens[i] : strlen(np);
+        if (norm_path_matches_one(norm_candidate, clen, np, plen)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool wc_exclusion_matches(const char *candidate, const char *const *patterns, int count) {
     if (!candidate || !candidate[0] || !patterns || count <= 0) return false;
 
@@ -159,13 +187,7 @@ bool wc_exclusion_matches(const char *candidate, const char *const *patterns, in
         if (!patterns[i] || !patterns[i][0]) continue;
         char np[WC_PATH_CAP];
         if (!wc_safety_normalize_path(patterns[i], np, sizeof np)) continue;
-        size_t plen = strlen(np);
-
-        char sep = (np[0] == '/') ? '/' : '\\';
-        if (clen == plen && ascii_strcasecmp(nc, np) == 0) {
-            return true;
-        }
-        if (clen > plen && nc[plen] == sep && ascii_strncasecmp(nc, np, plen) == 0) {
+        if (norm_path_matches_one(nc, clen, np, strlen(np))) {
             return true;
         }
     }

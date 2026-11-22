@@ -53,10 +53,12 @@ static bool run_cmd_capture(char *const argv[], const volatile int *cancel_flag,
             break;
         }
 
+        bool got_data = false;
         char chunk[4096];
         for (;;) {
             ssize_t n = read(fds[0], chunk, sizeof chunk);
             if (n > 0) {
+                got_data = true;
                 if (out_buf && out_cap > 1 && pos < out_cap - 1) {
                     size_t cp = (size_t)n;
                     if (pos + cp >= out_cap) cp = (out_cap - 1) - pos;
@@ -82,7 +84,9 @@ static bool run_cmd_capture(char *const argv[], const volatile int *cancel_flag,
             }
             break;
         }
-        usleep(50000);
+        if (!got_data) {
+            usleep(20000);
+        }
     }
 
     close(fds[0]);

@@ -35,14 +35,24 @@ static void test_posix_safety(void) {
     CHECK(!wc_safety_is_valid_target_root("/System/Library"));
     CHECK(!wc_safety_is_valid_target_root("/Library"));
     CHECK(!wc_safety_is_valid_target_root("/Applications"));
+    CHECK(!wc_safety_is_valid_target_root("/Applications/Safari.app"));
     CHECK(!wc_safety_is_valid_target_root("/Users"));
     CHECK(!wc_safety_is_valid_target_root("/Users/alice"));
     CHECK(!wc_safety_is_valid_target_root("/usr"));
+    CHECK(!wc_safety_is_valid_target_root("/usr/bin"));
+    CHECK(!wc_safety_is_valid_target_root("/bin/sh"));
     CHECK(!wc_safety_is_valid_target_root("/etc"));
+    CHECK(!wc_safety_is_valid_target_root("/etc/hosts"));
+    CHECK(!wc_safety_is_valid_target_root("/private/etc/ssl"));
+    CHECK(!wc_safety_is_valid_target_root("/dev/null"));
 
     CHECK(wc_safety_is_valid_target_root("/Users/alice/Library/Caches"));
     CHECK(wc_safety_is_valid_target_root("/Library/Caches"));
     CHECK(wc_safety_is_valid_target_root("/tmp/wada_clean_test"));
+
+    CHECK(wc_safety_is_thumbcache_file("thumbcache_256.db"));
+    CHECK(!wc_safety_is_thumbcache_file("sub/thumbcache_256.db"));
+    CHECK(!wc_safety_is_thumbcache_file("other.db"));
 
     const char *root = "/Users/alice/Library/Caches";
     CHECK(wc_safety_path_within(root, "/Users/alice/Library/Caches/com.apple.Safari"));
@@ -62,6 +72,14 @@ static void test_posix_exclusions(void) {
     CHECK(wc_exclusion_matches("/tmp/keep.log", patterns, 2));
     CHECK(!wc_exclusion_matches("/Users/alice/Library/Caches/com.important.app2/x", patterns, 2));
     CHECK(!wc_exclusion_matches("/tmp/other.log", patterns, 2));
+
+    const size_t lens[2] = {strlen(patterns[0]), strlen(patterns[1])};
+    CHECK(wc_exclusion_matches_norm("/Users/alice/Library/Caches/com.important.app", patterns,
+                                    lens, 2));
+    CHECK(wc_exclusion_matches_norm("/users/alice/library/caches/com.important.app/data.db",
+                                    patterns, lens, 2));
+    CHECK(!wc_exclusion_matches_norm("/Users/alice/Library/Caches/com.important.app2/x", patterns,
+                                     lens, 2));
 }
 
 static void test_brew_outdated_parser(void) {

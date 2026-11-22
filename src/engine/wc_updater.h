@@ -12,6 +12,7 @@ typedef struct wc_updater_worker {
     wc_thread *thread;
     volatile int cancel_flag;
     bool running;
+    bool dirty;
     wc_updater_op job_op;
     char job_pkg_id[160];
     wc_updater_snapshot *snap;

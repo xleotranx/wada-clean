@@ -11,13 +11,16 @@
 typedef struct worker_excl_ctx {
     char paths[WC_MAX_EXCLUSIONS][WC_PATH_CAP];
     const char *ptrs[WC_MAX_EXCLUSIONS];
+    size_t lens[WC_MAX_EXCLUSIONS];
     int count;
 } worker_excl_ctx;
 
 static bool worker_is_excluded(const char *path, void *user) {
     const worker_excl_ctx *ctx = (const worker_excl_ctx *)user;
-    if (!ctx || ctx->count <= 0) return false;
-    return wc_exclusion_matches(path, ctx->ptrs, ctx->count);
+    if (!ctx || ctx->count <= 0 || !path || !path[0]) return false;
+    char norm[WC_PATH_CAP];
+    if (!wc_safety_normalize_path(path, norm, sizeof norm)) return false;
+    return wc_exclusion_matches_norm(norm, ctx->ptrs, ctx->lens, ctx->count);
 }
 
 static void worker_entry(void *user) {
@@ -36,10 +39,21 @@ static void worker_entry(void *user) {
         for (int i = 0; i < ec; i++) {
             snprintf(excl_ctx->paths[i], sizeof excl_ctx->paths[i], "%s", w->exclusions[i]);
             excl_ctx->ptrs[i] = excl_ctx->paths[i];
+            excl_ctx->lens[i] = strlen(excl_ctx->paths[i]);
         }
         excl_ctx->count = ec;
     }
     wc_mutex_unlock(w->mu);
+
+    const char *proc_names[WC_MAX_TARGETS];
+    bool proc_running[WC_MAX_TARGETS];
+    memset(proc_running, 0, sizeof proc_running);
+    for (int i = 0; i < count; i++) {
+        proc_names[i] = (w->job_selected[i] && w->job_defs[i].process_name[0])
+                            ? w->job_defs[i].process_name
+                            : "";
+    }
+    wc_plat_processes_running(proc_names, count, proc_running);
 
     wc_exclude_fn excl_fn = (excl_ctx && excl_ctx->count > 0) ? worker_is_excluded : NULL;
 
@@ -52,6 +66,7 @@ static void worker_entry(void *user) {
         wc_mutex_lock(w->mu);
         w->snap.current_index = i;
         snprintf(w->snap.current_label, sizeof w->snap.current_label, "%s", def->label);
+        w->dirty = true;
         wc_target_result res = w->snap.results[i];
         wc_mutex_unlock(w->mu);
 
@@ -64,11 +79,12 @@ static void worker_entry(void *user) {
         if (!selected) {
             wc_mutex_lock(w->mu);
             w->snap.results[i] = res;
+            w->dirty = true;
             wc_mutex_unlock(w->mu);
             continue;
         }
 
-        if (def->process_name[0] && wc_plat_process_running(def->process_name)) {
+        if (proc_running[i]) {
             res.browser_running = true;
         }
 
@@ -113,8 +129,8 @@ static void worker_entry(void *user) {
                 snprintf(res.resolved_path, sizeof res.resolved_path, "%s", path);
                 if (kind == WC_JOB_ANALYZE) {
                     uint64_t files = 0, bytes = 0;
-                    if (wc_plat_scan_dir_ex(path, &w->cancel_flag, excl_fn, excl_ctx, &files,
-                                            &bytes)) {
+                    if (wc_plat_scan_target(def->kind, path, &w->cancel_flag, excl_fn, excl_ctx,
+                                            &files, &bytes)) {
                         res.analyzed = true;
                         res.files_found = files;
                         res.bytes_found = bytes;
@@ -138,8 +154,8 @@ static void worker_entry(void *user) {
                         snprintf(res.note, sizeof res.note, "Skipped (browser running)");
                     } else {
                         uint64_t files = 0, bytes = 0, skipped = 0;
-                        if (wc_plat_clean_dir_ex(path, dry_run, &w->cancel_flag, excl_fn, excl_ctx,
-                                                 &files, &bytes, &skipped)) {
+                        if (wc_plat_clean_target(def->kind, path, dry_run, &w->cancel_flag, excl_fn,
+                                                 excl_ctx, &files, &bytes, &skipped)) {
                             res.cleaned = true;
                             res.files_cleaned = files;
                             res.bytes_cleaned = bytes;
@@ -173,6 +189,7 @@ static void worker_entry(void *user) {
             w->snap.total_bytes_cleaned += res.bytes_cleaned;
             w->snap.total_skipped += res.skipped_count;
         }
+        w->dirty = true;
         wc_mutex_unlock(w->mu);
     }
 
@@ -181,6 +198,7 @@ static void worker_entry(void *user) {
     w->snap.current_label[0] = '\0';
     w->snap.state = w->cancel_flag ? WC_JOB_CANCELLED : WC_JOB_DONE;
     w->running = false;
+    w->dirty = true;
     wc_mutex_unlock(w->mu);
 
     free(excl_ctx);
@@ -194,8 +212,10 @@ void wc_worker_set_exclusions(wc_worker *w, const wc_exclusion_item *items, int 
         if (count > WC_MAX_EXCLUSIONS) count = WC_MAX_EXCLUSIONS;
         for (int i = 0; i < count; i++) {
             if (items[i].path[0]) {
-                snprintf(w->exclusions[n], sizeof w->exclusions[n], "%s", items[i].path);
-                n++;
+                if (wc_safety_normalize_path(items[i].path, w->exclusions[n],
+                                             sizeof w->exclusions[n])) {
+                    n++;
+                }
             }
         }
     }
@@ -210,6 +230,7 @@ bool wc_worker_init(wc_worker *w) {
     if (!w->mu) return false;
     w->snap.state = WC_JOB_IDLE;
     w->snap.current_index = -1;
+    w->dirty = true;
     return true;
 }
 
@@ -299,12 +320,14 @@ bool wc_worker_start(wc_worker *w, wc_job_kind kind, bool dry_run,
     w->snap.current_label[0] = '\0';
     w->snap.target_count = target_count;
     w->running = true;
+    w->dirty = true;
 
     wc_thread *t = wc_thread_start(worker_entry, w);
     if (!t) {
         w->running = false;
         w->snap.state = WC_JOB_ERROR;
         snprintf(w->snap.error_msg, sizeof w->snap.error_msg, "Failed to start worker thread");
+        w->dirty = true;
         wc_mutex_unlock(w->mu);
         return false;
     }
@@ -326,9 +349,13 @@ bool wc_worker_poll(wc_worker *w, wc_worker_snapshot *out) {
     if (!w->running && w->thread) {
         done_thread = w->thread;
         w->thread = NULL;
+        w->dirty = true;
     }
     bool running = w->running;
-    if (out) *out = w->snap;
+    if (out && (running || w->dirty || out->state != w->snap.state)) {
+        *out = w->snap;
+        if (!running) w->dirty = false;
+    }
     wc_mutex_unlock(w->mu);
 
     if (done_thread) wc_thread_join(done_thread);

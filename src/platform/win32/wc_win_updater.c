@@ -16,10 +16,26 @@ static bool utf8_to_wide(const char *src, wchar_t *dst, int cap) {
     return n > 0 && n <= cap;
 }
 
+static bool resolve_winget_exe(wchar_t *out, int cap) {
+    wchar_t local[WC_PATH_CAP];
+    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", local, WC_PATH_CAP);
+    if (n > 0 && n < WC_PATH_CAP) {
+        int pn = _snwprintf(out, cap, L"%ls\\Microsoft\\WindowsApps\\winget.exe", local);
+        if (pn > 0 && pn < cap && GetFileAttributesW(out) != INVALID_FILE_ATTRIBUTES) {
+            return true;
+        }
+    }
+    DWORD sn = SearchPathW(NULL, L"winget.exe", NULL, (DWORD)cap, out, NULL);
+    return sn > 0 && sn < (DWORD)cap;
+}
+
 static bool run_hidden_capture(const wchar_t *wcmd_ro, const volatile int *cancel_flag,
                                char *out_buf, size_t out_cap, DWORD *out_exit) {
     if (out_buf && out_cap > 0) out_buf[0] = '\0';
     if (out_exit) *out_exit = 1;
+
+    wchar_t app_path[WC_PATH_CAP];
+    if (!resolve_winget_exe(app_path, WC_PATH_CAP)) return false;
 
     size_t cmd_len = wcslen(wcmd_ro) + 1;
     wchar_t *wcmd = (wchar_t *)malloc(cmd_len * sizeof(wchar_t));
@@ -32,7 +48,7 @@ static bool run_hidden_capture(const wchar_t *wcmd_ro, const volatile int *cance
     sa.bInheritHandle = TRUE;
 
     HANDLE read_pipe = NULL, write_pipe = NULL;
-    if (!CreatePipe(&read_pipe, &write_pipe, &sa, 0)) {
+    if (!CreatePipe(&read_pipe, &write_pipe, &sa, 65536)) {
         free(wcmd);
         return false;
     }
@@ -48,7 +64,8 @@ static bool run_hidden_capture(const wchar_t *wcmd_ro, const volatile int *cance
     si.hStdOutput = write_pipe;
     si.hStdError = write_pipe;
 
-    BOOL started = CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    BOOL started =
+        CreateProcessW(app_path, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
     free(wcmd);
     CloseHandle(write_pipe);
 
@@ -66,12 +83,14 @@ static bool run_hidden_capture(const wchar_t *wcmd_ro, const volatile int *cance
             break;
         }
 
+        bool got_data = false;
         DWORD avail = 0;
         while (PeekNamedPipe(read_pipe, NULL, 0, NULL, &avail, NULL) && avail > 0) {
             char chunk[4096];
             DWORD to_read = avail < sizeof chunk ? avail : (DWORD)sizeof chunk;
             DWORD got = 0;
             if (!ReadFile(read_pipe, chunk, to_read, &got, NULL) || got == 0) break;
+            got_data = true;
             if (out_buf && out_cap > 1 && pos < out_cap - 1) {
                 size_t copy = got;
                 if (pos + copy >= out_cap) copy = (out_cap - 1) - pos;
@@ -80,7 +99,7 @@ static bool run_hidden_capture(const wchar_t *wcmd_ro, const volatile int *cance
             }
         }
 
-        DWORD w = WaitForSingleObject(pi.hProcess, 50);
+        DWORD w = WaitForSingleObject(pi.hProcess, got_data ? 0 : 20);
         if (w == WAIT_OBJECT_0) {
             /* Drain remaining buffered stdout. */
             while (PeekNamedPipe(read_pipe, NULL, 0, NULL, &avail, NULL) && avail > 0) {
