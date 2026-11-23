@@ -133,6 +133,8 @@ static void scan_uninstall_key(HKEY hive, REGSAM wow64, bool is_user, wc_app_ite
 
         reg_read_str(app_key, L"Publisher", item.publisher, sizeof item.publisher);
         reg_read_str(app_key, L"DisplayVersion", item.version, sizeof item.version);
+        reg_read_str(app_key, L"InstallLocation", item.install_location,
+                     sizeof item.install_location);
 
         char raw_date[32];
         if (reg_read_str(app_key, L"InstallDate", raw_date, sizeof raw_date)) {

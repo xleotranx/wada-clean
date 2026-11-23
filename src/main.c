@@ -116,7 +116,8 @@ static int run_scheduled_clean(bool dry_run) {
     for (int i = 0; i < nrules; i++) {
         const wc_target_def *def = wc_rules_get(i);
         proc_names[i] =
-            (def && def->default_enabled && (!def->needs_admin || is_admin) && def->process_name[0])
+            (def && def->default_enabled && def->risk == WC_RISK_SAFE && !def->quarantine &&
+             (!def->needs_admin || is_admin) && def->process_name[0])
                 ? def->process_name
                 : "";
     }
@@ -130,6 +131,7 @@ static int run_scheduled_clean(bool dry_run) {
     for (int i = 0; i < nrules; i++) {
         const wc_target_def *def = wc_rules_get(i);
         if (!def || !def->default_enabled) continue;
+        if (def->risk != WC_RISK_SAFE || def->quarantine) continue;
         if (def->needs_admin && !is_admin) {
             wc_history_append_detail(&entry, def->id, def->label, 0, 0, 0,
                                      "Requires Administrator");

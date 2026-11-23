@@ -67,6 +67,16 @@ static void draw_target_row(wc_cleaner_state *st, cui_ctx *ui, int idx) {
                 }
 
                 cui_row(ui, .align = CUI_ALIGN_CENTER, .gap = 6) {
+                    if (def->risk == WC_RISK_MODERATE) {
+                        cui_badge(ui, wada_tr("Moderate"), .tone = CUI_TONE_WARNING,
+                                  .size = CUI_SIZE_SM);
+                    } else if (def->risk == WC_RISK_DEEP) {
+                        cui_badge(ui, wada_tr("Deep"), .tone = CUI_TONE_DANGER, .size = CUI_SIZE_SM);
+                    }
+                    if (def->quarantine) {
+                        cui_badge(ui, wada_tr("Quarantine"), .tone = CUI_TONE_INFO,
+                                  .size = CUI_SIZE_SM);
+                    }
                     if (def->needs_admin && !st->is_admin) {
                         cui_badge(ui, wada_tr("Admin"), .tone = CUI_TONE_WARNING, .size = CUI_SIZE_SM);
                     }
@@ -118,7 +128,7 @@ static void draw_target_row(wc_cleaner_state *st, cui_ctx *ui, int idx) {
     }
 }
 
-static void draw_category_group(wc_cleaner_state *st, cui_ctx *ui, wc_category cat,
+static bool draw_category_group(wc_cleaner_state *st, cui_ctx *ui, wc_category cat,
                                 const char *heading, const char *icon) {
     int cat_total = 0;
     int cat_selected = 0;
@@ -133,6 +143,7 @@ static void draw_category_group(wc_cleaner_state *st, cui_ctx *ui, wc_category c
             cat_bytes += st->snap.results[i].bytes_found;
         }
     }
+    if (cat_total == 0) return false;
 
     char cat_badge[32];
     cui_tone cat_tone = CUI_TONE_NEUTRAL;
@@ -174,6 +185,7 @@ static void draw_category_group(wc_cleaner_state *st, cui_ctx *ui, wc_category c
             draw_target_row(st, ui, i);
         }
     }
+    return true;
 }
 
 static int history_target_count(const wc_history_entry *entry) {
@@ -442,6 +454,8 @@ void wc_view_cleaner_draw(wc_cleaner_state *st, wada_app *app) {
     uint64_t sel_files_found = 0;
     uint64_t sys_bytes_found = 0;
     uint64_t browser_bytes_found = 0;
+    uint64_t app_bytes_found = 0;
+    uint64_t dev_bytes_found = 0;
     bool any_browser_running = false;
 
     for (int i = 0; i < st->target_count; i++) {
@@ -457,8 +471,12 @@ void wc_view_cleaner_draw(wc_cleaner_state *st, wada_app *app) {
         if (res->analyzed) {
             if (st->defs[i].category == WC_CAT_SYSTEM) {
                 sys_bytes_found += res->bytes_found;
-            } else {
+            } else if (st->defs[i].category == WC_CAT_BROWSER) {
                 browser_bytes_found += res->bytes_found;
+            } else if (st->defs[i].category == WC_CAT_APPS) {
+                app_bytes_found += res->bytes_found;
+            } else if (st->defs[i].category == WC_CAT_DEV) {
+                dev_bytes_found += res->bytes_found;
             }
         }
     }
@@ -608,9 +626,26 @@ void wc_view_cleaner_draw(wc_cleaner_state *st, wada_app *app) {
             /* Left: Cleaner targets */
             cui_column(ui, .width = CUI_GROW(1.45f), .height = CUI_FILL, .gap = 6) {
                 wc_scroll_list(ui, "cleaner-targets", 6) {
-                    draw_category_group(st, ui, WC_CAT_SYSTEM, "System", CUI_ICON_CPU);
-                    cui_separator(ui);
-                    draw_category_group(st, ui, WC_CAT_BROWSER, "Browsers", CUI_ICON_GLOBE);
+                    bool drew = draw_category_group(st, ui, WC_CAT_SYSTEM, "System", CUI_ICON_CPU);
+                    bool has_b = false, has_a = false;
+                    for (int i = 0; i < st->target_count; i++) {
+                        if (st->defs[i].category == WC_CAT_BROWSER) has_b = true;
+                        if (st->defs[i].category == WC_CAT_APPS) has_a = true;
+                    }
+                    if (drew && has_b) cui_separator(ui);
+                    if (draw_category_group(st, ui, WC_CAT_BROWSER, "Browsers", CUI_ICON_GLOBE)) {
+                        drew = true;
+                    }
+                    if (drew && has_a) cui_separator(ui);
+                    if (draw_category_group(st, ui, WC_CAT_APPS, "Apps", CUI_ICON_PACKAGE)) {
+                        drew = true;
+                    }
+                    bool has_d = false;
+                    for (int i = 0; i < st->target_count; i++) {
+                        if (st->defs[i].category == WC_CAT_DEV) has_d = true;
+                    }
+                    if (drew && has_d) cui_separator(ui);
+                    draw_category_group(st, ui, WC_CAT_DEV, "Developer Caches", CUI_ICON_CODE);
                 }
             }
 
@@ -654,7 +689,7 @@ void wc_view_cleaner_draw(wc_cleaner_state *st, wada_app *app) {
                     }
 
                     if (st->has_analyzed && st->snap.total_bytes_found > 0) {
-                        char sys_str[32], browser_str[32];
+                        char sys_str[32], browser_str[32], app_str[32], dev_str[32];
                         wc_format_bytes(sys_bytes_found, sys_str, sizeof sys_str);
                         wc_format_bytes(browser_bytes_found, browser_str, sizeof browser_str);
                         float sys_ratio = (float)((double)sys_bytes_found /
@@ -682,6 +717,36 @@ void wc_view_cleaner_draw(wc_cleaner_state *st, wada_app *app) {
                             }
                             cui_progress(ui, browser_ratio, .width = CUI_FILL, .height = 5.0f,
                                          .tone = CUI_TONE_TEAL);
+
+                            if (app_bytes_found > 0) {
+                                wc_format_bytes(app_bytes_found, app_str, sizeof app_str);
+                                float app_ratio = (float)((double)app_bytes_found /
+                                                          (double)st->snap.total_bytes_found);
+                                if (app_ratio > 1.0f) app_ratio = 1.0f;
+                                cui_row(ui, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN) {
+                                    cui_text(ui, wada_tr("Apps"), .size = 12,
+                                             .color = CUI_COLOR_TEXT_SECONDARY);
+                                    cui_text(ui, app_str, .size = 12,
+                                             .color = CUI_COLOR_TEXT_SECONDARY, .tabular = true);
+                                }
+                                cui_progress(ui, app_ratio, .width = CUI_FILL, .height = 5.0f,
+                                             .tone = CUI_TONE_INFO);
+                            }
+
+                            if (dev_bytes_found > 0) {
+                                wc_format_bytes(dev_bytes_found, dev_str, sizeof dev_str);
+                                float dev_ratio = (float)((double)dev_bytes_found /
+                                                          (double)st->snap.total_bytes_found);
+                                if (dev_ratio > 1.0f) dev_ratio = 1.0f;
+                                cui_row(ui, .width = CUI_FILL, .justify = CUI_JUSTIFY_BETWEEN) {
+                                    cui_text(ui, wada_tr("Developer Caches"), .size = 12,
+                                             .color = CUI_COLOR_TEXT_SECONDARY);
+                                    cui_text(ui, dev_str, .size = 12,
+                                             .color = CUI_COLOR_TEXT_SECONDARY, .tabular = true);
+                                }
+                                cui_progress(ui, dev_ratio, .width = CUI_FILL, .height = 5.0f,
+                                             .tone = CUI_TONE_WARNING);
+                            }
                         }
                     }
 

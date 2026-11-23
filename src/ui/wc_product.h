@@ -8,10 +8,13 @@
 #include "wada_ui.h"
 #include "wc_cookies.h"
 #include "wc_cookie_job.h"
+#include "wc_deep.h"
 #include "wc_disk.h"
 #include "wc_exclusions.h"
 #include "wc_history.h"
+#include "wc_leftovers.h"
 #include "wc_list_job.h"
+#include "wc_quarantine.h"
 #include "wc_types.h"
 #include "wc_updater.h"
 #include "wc_worker.h"
@@ -33,7 +36,8 @@ typedef enum wc_view_id {
     WC_VIEW_DISK = 4,
     WC_VIEW_UPDATER = 5,
     WC_VIEW_EXCLUSIONS = 6,
-    WC_VIEW_AUTOMATION = 7
+    WC_VIEW_AUTOMATION = 7,
+    WC_VIEW_DEEP = 8
 } wc_view_id;
 
 #define WC_APP_VERSION "0.1.0"
@@ -70,6 +74,10 @@ typedef struct wc_cleaner_state {
     bool history_open;
     int history_selected;
     bool about_open;
+
+    wc_quarantine quarantine;
+    wc_quarantine_item quarantine_items[WC_MAX_QUARANTINE];
+    int quarantine_count;
 
     wada_ui_confirm confirm;
 
@@ -116,11 +124,19 @@ typedef struct wc_cleaner_state {
     int filtered_app_count;
     int app_selected;
     wada_ui_confirm app_confirm;
+    wc_leftover_worker leftover_worker;
+    wc_leftover_snapshot *leftover_snap;
+    bool leftover_running;
 
     /* Disk Analyzer view */
     wc_disk_worker disk_worker;
     wc_disk_snapshot disk_snap;
     bool disk_running;
+    wc_disk_extra_worker disk_extra_worker;
+    wc_dup_snapshot *dup_snap;
+    wc_stale_snapshot *stale_snap;
+    wc_disk_extra_op disk_extra_op;
+    bool disk_extra_running;
     char disk_root[WC_PATH_CAP];
     int disk_tab;
 
@@ -135,6 +151,17 @@ typedef struct wc_cleaner_state {
     int sched_freq_idx;
     double sched_hour;
     bool tray_enabled;
+
+    /* Deep Clean view */
+    wc_deep_worker deep_worker;
+    wc_deep_snapshot *deep_snap;
+    bool deep_running;
+    int deep_tab;
+    bool deep_dry_run;
+    bool deep_reset_base;
+    bool deep_restore_point;
+    bool deep_drivers_unused_only;
+    wada_ui_confirm deep_confirm;
 
     char data_dir[WC_PATH_CAP];
     char status[128];
@@ -156,6 +183,7 @@ void wc_cleaner_select_category(wc_cleaner_state *st, wc_category cat, bool sele
 
 void wc_exclusions_reload(wc_cleaner_state *st);
 void wc_cookies_reload(wc_cleaner_state *st);
+void wc_quarantine_reload(wc_cleaner_state *st);
 void wc_startup_refresh(wc_cleaner_state *st);
 void wc_apps_refresh(wc_cleaner_state *st);
 void wc_disk_start_scan(wc_cleaner_state *st);
@@ -168,6 +196,7 @@ void wc_view_disk_draw(wc_cleaner_state *st, wada_app *app);
 void wc_view_updater_draw(wc_cleaner_state *st, wada_app *app);
 void wc_view_exclusions_draw(wc_cleaner_state *st, wada_app *app);
 void wc_view_schedule_draw(wc_cleaner_state *st, wada_app *app);
+void wc_view_deep_draw(wc_cleaner_state *st, wada_app *app);
 
 extern const wada_product wc_cleaner_product;
 

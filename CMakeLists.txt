@@ -16,6 +16,10 @@ add_library(wc_engine STATIC
     src/engine/wc_safety.c
     src/engine/wc_rules.c
     src/engine/wc_history.c
+    src/engine/wc_quarantine.c
+    src/engine/wc_deep.c
+    src/engine/wc_leftovers.c
+    src/engine/wc_sha256.c
     src/engine/wc_worker.c
     src/engine/wc_disk.c
     src/engine/wc_exclusions.c
@@ -44,6 +48,7 @@ if(WIN32)
         src/platform/win32/wc_win_sched.c
         src/platform/win32/wc_win_dialog.c
         src/platform/win32/wc_win_cookies.c
+        src/platform/win32/wc_win_deep.c
     )
     target_include_directories(wc_platform PUBLIC src/platform src/engine "${WADA_C_ABS}/vendor/sqlite")
     target_link_libraries(wc_platform PUBLIC wc_engine wada_sqlite shell32 advapi32 user32 ole32 uuid)
@@ -63,6 +68,7 @@ elseif(APPLE)
         src/platform/macos/wc_mac_updater.c
         src/platform/macos/wc_mac_sched.c
         src/platform/macos/wc_mac_cookies.c
+        src/platform/macos/wc_mac_deep.c
     )
     target_include_directories(wc_platform PUBLIC src/platform src/engine "${WADA_C_ABS}/vendor/sqlite")
     target_link_libraries(wc_platform PUBLIC wc_engine wada_sqlite Threads::Threads)
@@ -83,6 +89,7 @@ add_executable(wada_clean
     src/ui/wc_view_updater.c
     src/ui/wc_view_exclusions.c
     src/ui/wc_view_schedule.c
+    src/ui/wc_view_deep.c
 )
 target_include_directories(wada_clean PRIVATE src/engine src/platform src/ui)
 target_link_libraries(wada_clean PRIVATE wc_engine wc_platform wada_shell)
@@ -147,7 +154,43 @@ add_test(NAME phase1 COMMAND wada_clean_tests)
 add_test(NAME phase2 COMMAND wada_phase2_tests)
 add_test(NAME phase3 COMMAND wada_phase3_tests)
 add_test(NAME phase4 COMMAND wada_phase4_tests)
+
+add_executable(wada_wave1_tests
+    tests/test_wave1.c
+)
+target_include_directories(wada_wave1_tests PRIVATE src/engine src/platform "${WADA_C_ABS}/src/providers/sqlite")
+target_link_libraries(wada_wave1_tests PRIVATE wc_engine wc_platform wada_sqlite)
+if(MSVC)
+    target_compile_options(wada_wave1_tests PRIVATE /W4)
+else()
+    target_compile_options(wada_wave1_tests PRIVATE -Wall -Wextra)
 endif()
+add_test(NAME wave1 COMMAND wada_wave1_tests)
+
+add_executable(wada_wave3_tests
+    tests/test_wave3.c
+)
+target_include_directories(wada_wave3_tests PRIVATE src/engine src/platform)
+target_link_libraries(wada_wave3_tests PRIVATE wc_engine wc_platform wada_core)
+if(MSVC)
+    target_compile_options(wada_wave3_tests PRIVATE /W4)
+else()
+    target_compile_options(wada_wave3_tests PRIVATE -Wall -Wextra)
+endif()
+add_test(NAME wave3 COMMAND wada_wave3_tests)
+endif()
+
+add_executable(wada_wave2_tests
+    tests/test_wave2.c
+)
+target_include_directories(wada_wave2_tests PRIVATE src/engine src/platform)
+target_link_libraries(wada_wave2_tests PRIVATE wc_engine wc_platform wada_core)
+if(MSVC)
+    target_compile_options(wada_wave2_tests PRIVATE /W4)
+else()
+    target_compile_options(wada_wave2_tests PRIVATE -Wall -Wextra)
+endif()
+add_test(NAME wave2 COMMAND wada_wave2_tests)
 
 add_executable(wada_phase5_tests
     tests/test_phase5.c

@@ -4,13 +4,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define WC_MAX_TARGETS 32
+#define WC_MAX_TARGETS 64
 #define WC_MAX_EXCLUSIONS 128
 #define WC_MAX_STARTUP 256
 #define WC_MAX_APPS 512
 #define WC_MAX_UPDATES 128
 #define WC_MAX_COOKIE_ALLOW 256
 #define WC_MAX_COOKIE_DBS 64
+#define WC_MAX_QUARANTINE 256
+#define WC_MAX_LEFTOVERS 64
 #define WC_DISK_TOP_DIRS 25
 #define WC_DISK_TOP_FILES 25
 #define WC_PATH_CAP 1024
@@ -21,14 +23,25 @@
 
 typedef enum wc_category {
     WC_CAT_SYSTEM = 0,
-    WC_CAT_BROWSER = 1
+    WC_CAT_BROWSER = 1,
+    WC_CAT_APPS = 2,
+    WC_CAT_DEV = 3,
+    WC_CAT_DEEP = 4
 } wc_category;
+
+typedef enum wc_risk_tier {
+    WC_RISK_SAFE = 0,
+    WC_RISK_MODERATE = 1,
+    WC_RISK_DEEP = 2
+} wc_risk_tier;
 
 typedef enum wc_target_kind {
     WC_TARGET_DIR_CONTENTS = 0,
     WC_TARGET_RECYCLE_BIN = 1,
     WC_TARGET_THUMB_CACHE = 2,
-    WC_TARGET_FIREFOX_PROFILES = 3
+    WC_TARGET_FIREFOX_PROFILES = 3,
+    WC_TARGET_CHROMIUM_PROFILES = 4,
+    WC_TARGET_OLD_DOWNLOADS = 5
 } wc_target_kind;
 
 typedef enum wc_job_kind {
@@ -55,7 +68,18 @@ typedef struct wc_target_def {
     char process_name[64]; /* e.g. "chrome.exe", or "" */
     bool default_enabled;
     bool needs_admin;
+    wc_risk_tier risk;
+    bool quarantine;
 } wc_target_def;
+
+typedef struct wc_quarantine_item {
+    char id[48];
+    char orig_path[WC_PATH_CAP];
+    char vault_path[WC_PATH_CAP];
+    char source_tag[64];
+    uint64_t bytes;
+    long long unix_sec;
+} wc_quarantine_item;
 
 typedef struct wc_target_result {
     char id[WC_ID_CAP];
@@ -127,7 +151,16 @@ typedef struct wc_app_item {
     uint64_t estimated_size_bytes;
     char uninstall_cmd[WC_PATH_CAP];
     bool is_user_install;
+    char install_location[WC_PATH_CAP];
 } wc_app_item;
+
+typedef struct wc_leftover_item {
+    char path[WC_PATH_CAP];
+    uint64_t bytes;
+    int confidence; /* 2 = High, 1 = Medium */
+    bool is_dir;
+    bool selected;
+} wc_leftover_item;
 
 typedef struct wc_disk_entry {
     char path[WC_PATH_CAP];

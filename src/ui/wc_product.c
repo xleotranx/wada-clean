@@ -73,6 +73,17 @@ void wc_cookies_reload(wc_cleaner_state *st) {
     }
 }
 
+void wc_quarantine_reload(wc_cleaner_state *st) {
+    if (!st || !st->quarantine.open) return;
+    wada_err err;
+    wada_err_clear(&err);
+    int count = 0;
+    if (wc_quarantine_list(&st->quarantine, st->quarantine_items, WC_MAX_QUARANTINE, &count,
+                           &err) == WADA_OK) {
+        st->quarantine_count = count;
+    }
+}
+
 void wc_health_run_checkup(wc_cleaner_state *st) {
     if (!st || st->running) return;
     st->sys_drive_ok =
@@ -225,6 +236,10 @@ static void cmd_view_automation(void *user) {
     ((wc_cleaner_state *)user)->active_view = WC_VIEW_AUTOMATION;
 }
 
+static void cmd_view_deep(void *user) {
+    ((wc_cleaner_state *)user)->active_view = WC_VIEW_DEEP;
+}
+
 static void record_clean_history(wc_cleaner_state *st) {
     if (!st->history.open) return;
 
@@ -285,35 +300,56 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     st->sched_hour = 3.0;
     st->updater_snap.winget_available = true;
     st->cookie_dry_run = true;
+    st->deep_restore_point = true;
+    st->deep_drivers_unused_only = true;
     wada_ui_confirm_init(&st->confirm);
     wada_ui_confirm_init(&st->app_confirm);
     wada_ui_confirm_init(&st->cookie_confirm);
+    wada_ui_confirm_init(&st->deep_confirm);
 
     st->sys_drive_ok =
         wc_plat_disk_free_space(WC_SYS_DRIVE, &st->sys_drive_free, &st->sys_drive_total);
 
     st->startup_items = (wc_startup_item *)calloc(WC_MAX_STARTUP, sizeof *st->startup_items);
     st->app_items = (wc_app_item *)calloc(WC_MAX_APPS, sizeof *st->app_items);
-    if (!st->startup_items || !st->app_items) {
+    st->deep_snap = (wc_deep_snapshot *)calloc(1, sizeof *st->deep_snap);
+    st->leftover_snap = (wc_leftover_snapshot *)calloc(1, sizeof *st->leftover_snap);
+    st->dup_snap = (wc_dup_snapshot *)calloc(1, sizeof *st->dup_snap);
+    st->stale_snap = (wc_stale_snapshot *)calloc(1, sizeof *st->stale_snap);
+    if (!st->startup_items || !st->app_items || !st->deep_snap || !st->leftover_snap ||
+        !st->dup_snap || !st->stale_snap) {
         free(st->startup_items);
         free(st->app_items);
+        free(st->deep_snap);
+        free(st->leftover_snap);
+        free(st->dup_snap);
+        free(st->stale_snap);
         free(st);
         wada_err_set(err, WADA_ERR_NOMEM, "cleaner buffers");
         return NULL;
     }
 
     if (!wc_worker_init(&st->worker) || !wc_disk_worker_init(&st->disk_worker) ||
+        !wc_disk_extra_init(&st->disk_extra_worker) ||
         !wc_updater_worker_init(&st->updater_worker) ||
         !wc_cookie_job_init(&st->cookie_job) || !wc_list_job_init(&st->startup_job) ||
-        !wc_list_job_init(&st->app_job)) {
+        !wc_list_job_init(&st->app_job) || !wc_deep_worker_init(&st->deep_worker) ||
+        !wc_leftover_worker_init(&st->leftover_worker)) {
+        wc_leftover_worker_destroy(&st->leftover_worker);
+        wc_deep_worker_destroy(&st->deep_worker);
         wc_list_job_destroy(&st->app_job);
         wc_list_job_destroy(&st->startup_job);
         wc_cookie_job_destroy(&st->cookie_job);
         wc_updater_worker_destroy(&st->updater_worker);
+        wc_disk_extra_destroy(&st->disk_extra_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
         free(st->startup_items);
         free(st->app_items);
+        free(st->deep_snap);
+        free(st->leftover_snap);
+        free(st->dup_snap);
+        free(st->stale_snap);
         free(st);
         wada_err_set(err, WADA_ERR, "worker init");
         return NULL;
@@ -340,14 +376,21 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
 
     const wada_store_ops *ops = wada_ui_store_ops(app, "cleaner", err);
     if (!ops) {
+        wc_leftover_worker_destroy(&st->leftover_worker);
+        wc_deep_worker_destroy(&st->deep_worker);
         wc_list_job_destroy(&st->app_job);
         wc_list_job_destroy(&st->startup_job);
         wc_cookie_job_destroy(&st->cookie_job);
         wc_updater_worker_destroy(&st->updater_worker);
+        wc_disk_extra_destroy(&st->disk_extra_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
         free(st->startup_items);
         free(st->app_items);
+        free(st->deep_snap);
+        free(st->leftover_snap);
+        free(st->dup_snap);
+        free(st->stale_snap);
         free(st);
         return NULL;
     }
@@ -360,14 +403,21 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
         wc_cookies_close(&st->cookies);
         wc_exclusions_close(&st->exclusions);
         wc_history_close(&st->history);
+        wc_leftover_worker_destroy(&st->leftover_worker);
+        wc_deep_worker_destroy(&st->deep_worker);
         wc_list_job_destroy(&st->app_job);
         wc_list_job_destroy(&st->startup_job);
         wc_cookie_job_destroy(&st->cookie_job);
         wc_updater_worker_destroy(&st->updater_worker);
+        wc_disk_extra_destroy(&st->disk_extra_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
         free(st->startup_items);
         free(st->app_items);
+        free(st->deep_snap);
+        free(st->leftover_snap);
+        free(st->dup_snap);
+        free(st->stale_snap);
         free(st);
         return NULL;
     }
@@ -375,8 +425,26 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     wc_exclusions_reload(st);
     wc_cookies_reload(st);
 
+    if (data_dir && data_dir[0]) {
+        char vault_dir[WC_PATH_CAP];
+        snprintf(vault_dir, sizeof vault_dir, "%s" WADA_PATH_SEP "quarantine", data_dir);
+        wada_err qerr;
+        wada_err_clear(&qerr);
+        if (wc_quarantine_open(&st->quarantine, ops, db_path, vault_dir, &qerr) == WADA_OK) {
+            int purged = 0;
+            wc_quarantine_purge_older_than(&st->quarantine, WC_QUARANTINE_DEFAULT_TTL_SEC, 0,
+                                           &purged, &qerr);
+            wc_quarantine_reload(st);
+            wc_worker_set_quarantine(&st->worker, &st->quarantine);
+            wc_deep_worker_set_quarantine(&st->deep_worker, &st->quarantine);
+            wc_leftover_worker_set_quarantine(&st->leftover_worker, &st->quarantine);
+            wc_disk_extra_set_quarantine(&st->disk_extra_worker, &st->quarantine);
+        }
+    }
+
     wada_app_command(app, scope, "cleaner.view_health", "Open PC Health Check", "Ctrl 1", cmd_view_health, st);
     wada_app_command(app, scope, "cleaner.view_cleaner", "Open Junk Cleaner", "Ctrl 2", cmd_view_cleaner, st);
+    wada_app_command(app, scope, "cleaner.view_deep", "Open Deep Clean", "Ctrl 9", cmd_view_deep, st);
     wada_app_command(app, scope, "cleaner.view_disk", "Open Disk Space Analyzer", "Ctrl 3", cmd_view_disk, st);
     wada_app_command(app, scope, "cleaner.view_startup", "Open Startup Manager", "Ctrl 4", cmd_view_startup, st);
     wada_app_command(app, scope, "cleaner.view_apps", "Open Installed Apps", "Ctrl 5", cmd_view_apps, st);
@@ -396,17 +464,25 @@ static void wc_cleaner_leave(void *state) {
     wc_cleaner_state *st = (wc_cleaner_state *)state;
     if (!st) return;
     wc_plat_tray_hide();
+    wc_leftover_worker_destroy(&st->leftover_worker);
+    wc_deep_worker_destroy(&st->deep_worker);
     wc_list_job_destroy(&st->app_job);
     wc_list_job_destroy(&st->startup_job);
     wc_cookie_job_destroy(&st->cookie_job);
     wc_updater_worker_destroy(&st->updater_worker);
+    wc_disk_extra_destroy(&st->disk_extra_worker);
     wc_disk_worker_destroy(&st->disk_worker);
     wc_worker_destroy(&st->worker);
     wc_cookies_close(&st->cookies);
     wc_exclusions_close(&st->exclusions);
+    wc_quarantine_close(&st->quarantine);
     wc_history_close(&st->history);
     free(st->startup_items);
     free(st->app_items);
+    free(st->deep_snap);
+    free(st->leftover_snap);
+    free(st->dup_snap);
+    free(st->stale_snap);
     free(st);
 }
 
@@ -428,6 +504,7 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
                 wada_app_set_status(app, wada_tr("Analysis complete"));
             } else if (st->snap.kind == WC_JOB_CLEAN) {
                 record_clean_history(st);
+                wc_quarantine_reload(st);
                 st->sys_drive_ok = wc_plat_disk_free_space(WC_SYS_DRIVE, &st->sys_drive_free,
                                                            &st->sys_drive_total);
                 wada_app_set_status(
@@ -513,13 +590,77 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
         wada_ui_confirm_reset(&st->app_confirm);
     }
 
-    if (st->running || st->disk_running || st->updater_running || cookie_now ||
-        st->startup_loading || st->apps_loading) {
+    /* Poll deep clean worker */
+    bool deep_now = st->deep_snap ? wc_deep_worker_poll(&st->deep_worker, st->deep_snap) : false;
+    if (st->deep_running && !deep_now) {
+        st->deep_running = false;
+        if (st->deep_snap->state == WC_JOB_DONE) {
+            wc_quarantine_reload(st);
+            st->sys_drive_ok = wc_plat_disk_free_space(WC_SYS_DRIVE, &st->sys_drive_free,
+                                                       &st->sys_drive_total);
+            if (st->deep_snap->output_summary[0]) {
+                wada_app_set_status(app, st->deep_snap->output_summary);
+            } else {
+                wada_app_set_status(app, wada_tr("Deep maintenance complete"));
+            }
+        } else if (st->deep_snap->state == WC_JOB_CANCELLED) {
+            wada_app_set_status(app, wada_tr("Deep task cancelled"));
+        } else if (st->deep_snap->state == WC_JOB_ERROR && st->deep_snap->error_msg[0]) {
+            wada_app_set_status(app, st->deep_snap->error_msg);
+        }
+    } else if (deep_now) {
+        st->deep_running = true;
+    }
+
+    bool leftover_now =
+        st->leftover_snap ? wc_leftover_worker_poll(&st->leftover_worker, st->leftover_snap)
+                          : false;
+    if (st->leftover_running && !leftover_now) {
+        st->leftover_running = false;
+        if (st->leftover_snap->state == WC_JOB_DONE) {
+            wc_quarantine_reload(st);
+            if (st->leftover_snap->output_summary[0]) {
+                wada_app_set_status(app, st->leftover_snap->output_summary);
+            }
+        } else if (st->leftover_snap->state == WC_JOB_ERROR &&
+                   st->leftover_snap->error_msg[0]) {
+            wada_app_set_status(app, st->leftover_snap->error_msg);
+        }
+    } else if (leftover_now) {
+        st->leftover_running = true;
+    }
+
+    bool dex_now = (st->dup_snap && st->stale_snap)
+                       ? wc_disk_extra_poll(&st->disk_extra_worker, st->dup_snap, st->stale_snap,
+                                            &st->disk_extra_op)
+                       : false;
+    if (st->disk_extra_running && !dex_now) {
+        st->disk_extra_running = false;
+        wc_quarantine_reload(st);
+        if (st->disk_extra_op == WC_DEXTRA_DUPS && st->dup_snap->state == WC_JOB_DONE) {
+            wada_app_set_status(app, wada_tr("Duplicate scan complete"));
+        } else if (st->disk_extra_op == WC_DEXTRA_STALE && st->stale_snap->state == WC_JOB_DONE) {
+            wada_app_set_status(app, wada_tr("Stale artifacts scan complete"));
+        } else if (st->disk_extra_op == WC_DEXTRA_QUARANTINE) {
+            if (st->dup_snap->output_summary[0]) {
+                wada_app_set_status(app, st->dup_snap->output_summary);
+            } else if (st->stale_snap->output_summary[0]) {
+                wada_app_set_status(app, st->stale_snap->output_summary);
+            }
+        }
+    } else if (dex_now) {
+        st->disk_extra_running = true;
+    }
+
+    if (st->running || st->disk_running || st->disk_extra_running || st->updater_running ||
+        st->deep_running || st->leftover_running || cookie_now || st->startup_loading ||
+        st->apps_loading) {
         cui_request_wakeup(ui, 0.05f);
     }
 
     wada_ui_confirm_tick(&st->confirm, ui, 0);
     wada_ui_confirm_tick(&st->cookie_confirm, ui, 0);
+    wada_ui_confirm_tick(&st->deep_confirm, ui, 0);
 
     cui_row(ui, .width = CUI_FILL, .height = CUI_FILL) {
         /* Left navigation sidebar */
@@ -538,6 +679,11 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
                              .selected = st->active_view == WC_VIEW_CLEANER,
                              .group = "wc-nav")) {
                 st->active_view = WC_VIEW_CLEANER;
+            }
+            if (cui_nav_item(ui, wada_tr("Deep Clean"), .icon = CUI_ICON_LAYERS,
+                             .selected = st->active_view == WC_VIEW_DEEP,
+                             .group = "wc-nav")) {
+                st->active_view = WC_VIEW_DEEP;
             }
             if (cui_nav_item(ui, wada_tr("Disk Analyzer"), .icon = CUI_ICON_FOLDER_OPEN,
                              .selected = st->active_view == WC_VIEW_DISK,
@@ -621,6 +767,9 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
             case WC_VIEW_AUTOMATION:
                 wc_view_schedule_draw(st, app);
                 break;
+            case WC_VIEW_DEEP:
+                wc_view_deep_draw(st, app);
+                break;
             }
         }
     }
@@ -638,7 +787,7 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
             cui_separator(ui);
             cui_text(ui, wada_tr("Keyboard shortcuts"), .font = CUI_FONT_MEDIUM, .size = 14);
             draw_shortcut_row(ui, wada_tr("Command palette"), "Ctrl K");
-            draw_shortcut_row(ui, wada_tr("Switch section"), "Ctrl 1-8");
+            draw_shortcut_row(ui, wada_tr("Switch section"), "Ctrl 1-9");
             draw_shortcut_row(ui, wada_tr("Analyze junk"), "Ctrl R");
             draw_shortcut_row(ui, wada_tr("Preview files"), "Ctrl P");
             draw_shortcut_row(ui, wada_tr("Latest clean run"), "Ctrl H");
@@ -1053,10 +1202,188 @@ static const wada_i18n_pair wc_cleaner_strings[] = {
     {"Toggle theme", "Đổi giao diện"},
     {"Open data folder", "Mở thư mục dữ liệu"},
     {"Close", "Đóng"},
+
+    /* Wave 1: Expanded rules, risk tiers & quarantine badges */
+    {"Moderate", "Trung bình"},
+    {"Deep", "Sâu"},
+    {"Quarantine", "Cách ly"},
+    {"Developer Caches", "Bộ đệm lập trình"},
+    {"Moved to Quarantine", "Đã chuyển vào Kho cách ly"},
+    {"DirectX Shader Cache", "Bộ đệm Shader DirectX"},
+    {"NVIDIA Shader Cache", "Bộ đệm Shader NVIDIA"},
+    {"AMD Shader Cache", "Bộ đệm Shader AMD"},
+    {"Windows Error Reporting", "Báo cáo lỗi Windows"},
+    {"Old Installers in Downloads (30d+)", "Bộ cài cũ trong Tải xuống (30 ngày+)"},
+    {"Chrome Cache (All Profiles)", "Bộ đệm Chrome (Mọi hồ sơ)"},
+    {"Edge Cache (All Profiles)", "Bộ đệm Edge (Mọi hồ sơ)"},
+    {"Brave Cache (All Profiles)", "Bộ đệm Brave (Mọi hồ sơ)"},
+    {"VS Code Cache", "Bộ đệm VS Code"},
+    {"Discord Cache", "Bộ đệm Discord"},
+    {"Slack Cache", "Bộ đệm Slack"},
+    {"Spotify Cache", "Bộ đệm Spotify"},
+    {"npm Cache", "Bộ đệm npm"},
+    {"pnpm Store Cache", "Kho bộ đệm pnpm"},
+    {"pip Cache", "Bộ đệm pip"},
+    {"uv Python Cache", "Bộ đệm Python uv"},
+    {"NuGet Packages Cache", "Bộ đệm gói NuGet"},
+    {"Cargo Registry Cache", "Bộ đệm Cargo Registry"},
+    {"Gradle Cache", "Bộ đệm Gradle"},
+    {"Go Build Cache", "Bộ đệm Go Build"},
+
+    /* Wave 2 & 3: Deep Clean view */
+    {"Deep Clean", "Dọn sâu hệ thống"},
+    {"Open Deep Clean", "Mở Dọn sâu hệ thống"},
+    {"Clean WinSxS, old drivers, orphaned installers, storage policies, and virtual disks.",
+     "Dọn WinSxS, driver cũ, bộ cài mồ côi, chính sách lưu trữ và đĩa ảo WSL/Docker."},
+    {"Restore point", "Điểm khôi phục"},
+    {"Standard User mode: Restart as Administrator for WinSxS, DriverStore, and Storage Advisor changes.",
+     "Đang chạy quyền chuẩn: Mở lại bằng Quản trị viên để thay đổi WinSxS, DriverStore và Lưu trữ."},
+    {"Running deep maintenance task…", "Đang chạy tác vụ bảo trì sâu…"},
+    {"Deep maintenance complete", "Bảo trì sâu hoàn tất"},
+    {"Deep task cancelled", "Đã hủy tác vụ sâu"},
+    {"OS & WinSxS", "Hệ điều hành & WinSxS"},
+    {"DriverStore", "Kho Driver"},
+    {"Storage Advisor", "Tối ưu lưu trữ"},
+    {"Quarantine Vault", "Kho cách ly"},
+    {"WSL / Docker", "WSL / Docker"},
+    {"WinSxS Component Store (DISM)", "Kho thành phần WinSxS (DISM)"},
+    {"Safely remove superseded Windows Update component backups via DISM.",
+     "Xóa an toàn bản sao lưu Windows Update đã cũ thông qua DISM."},
+    {"Cleanup Recommended", "Nên dọn dẹp"},
+    {"Healthy", "Ổn định"},
+    {"Actual Size", "Dung lượng thực"},
+    {"Backups & Disabled", "Sao lưu & Tính năng tắt"},
+    {"Reclaimable Packages", "Gói có thể thu hồi"},
+    {"Deep /ResetBase (cannot uninstall current Windows updates afterward)",
+     "Dọn sâu /ResetBase (sau đó không thể gỡ bản cập nhật hiện tại)"},
+    {"Analyze WinSxS & OS", "Phân tích WinSxS & OS"},
+    {"Analyzing deep OS targets…", "Đang phân tích mục hệ thống sâu…"},
+    {"Clean WinSxS", "Dọn WinSxS"},
+    {"Confirm WinSxS Clean", "Xác nhận dọn WinSxS"},
+    {"Click Confirm WinSxS Clean to run DISM.", "Bấm Xác nhận dọn WinSxS để chạy DISM."},
+    {"Running DISM component cleanup…", "Đang chạy dọn WinSxS qua DISM…"},
+    {"Delivery Optimization Cache", "Bộ nhớ đệm Delivery Optimization"},
+    {"Cached Windows Update files used for peer delivery on local networks.",
+     "Tệp cập nhật Windows được đệm để chia sẻ trong mạng nội bộ."},
+    {"Clear Cache", "Xóa bộ đệm"},
+    {"Clearing Delivery Optimization cache…", "Đang xóa đệm Delivery Optimization…"},
+    {"Orphaned Installers (C:\\Windows\\Installer)", "Bộ cài mồ côi (C:\\Windows\\Installer)"},
+    {"Unreferenced .msi/.msp files verified against Windows Installer API; moved to Quarantine first.",
+     "Tệp .msi/.msp không còn liên kết đã đối chiếu API Windows Installer; chuyển vào Kho cách ly trước."},
+    {"%d selected (%s)", "Đã chọn %d (%s)"},
+    {"Quarantine Selected", "Cách ly mục đã chọn"},
+    {"Confirm Quarantine", "Xác nhận cách ly"},
+    {"Click Confirm Quarantine to move orphaned installers.",
+     "Bấm Xác nhận cách ly để di chuyển bộ cài mồ côi."},
+    {"Moving orphaned installers to Quarantine…", "Đang chuyển bộ cài mồ côi vào Kho cách ly…"},
+    {"No orphaned .msi/.msp files detected (run Analyze WinSxS & OS to scan).",
+     "Không thấy tệp .msi/.msp mồ côi (bấm Phân tích WinSxS & OS để quét)."},
+    {"Scan Drivers", "Quét Driver"},
+    {"Scanning DriverStore packages…", "Đang quét gói trong DriverStore…"},
+    {"Unused / superseded only", "Chỉ driver thừa / cũ"},
+    {"Select Superseded", "Chọn bản cũ"},
+    {"Remove Selected", "Gỡ mục đã chọn"},
+    {"Confirm Remove Drivers", "Xác nhận gỡ Driver"},
+    {"Click Confirm Remove Drivers to proceed.", "Bấm Xác nhận gỡ Driver để tiếp tục."},
+    {"Removing selected drivers…", "Đang gỡ driver đã chọn…"},
+    {"No drivers scanned yet", "Chưa quét driver"},
+    {"Click Scan Drivers to list third-party OEM packages in DriverStore.",
+     "Bấm Quét Driver để liệt kê gói OEM bên thứ ba trong DriverStore."},
+    {"In Use", "Đang dùng"},
+    {"Superseded", "Bản cũ"},
+    {"Unused", "Không dùng"},
+    {"Adjust OS-level compression, hibernation, and shadow copy storage limits.",
+     "Điều chỉnh nén hệ điều hành, ngủ đông và giới hạn dung lượng Shadow Copy."},
+    {"Querying storage configuration…", "Đang kiểm tra cấu hình lưu trữ…"},
+    {"CompactOS System Compression", "Nén hệ thống CompactOS"},
+    {"Unknown", "Chưa rõ"},
+    {"Enable CompactOS", "Bật CompactOS"},
+    {"Disable CompactOS", "Tắt CompactOS"},
+    {"Updating CompactOS state…", "Đang cập nhật trạng thái CompactOS…"},
+    {"Compresses Windows system binaries on SSDs (typically saves 2-4 GB with negligible CPU cost).",
+     "Nén tệp hệ thống Windows trên SSD (thường tiết kiệm 2-4 GB với tải CPU rất thấp)."},
+    {"Hibernation File (hiberfil.sys)", "Tệp ngủ đông (hiberfil.sys)"},
+    {"Disable Hibernation", "Tắt ngủ đông"},
+    {"Enable Hibernation", "Bật ngủ đông"},
+    {"Confirm Disable", "Xác nhận tắt"},
+    {"Click Confirm Disable to turn off hibernation.", "Bấm Xác nhận tắt để tắt chế độ ngủ đông."},
+    {"Updating hibernation setting…", "Đang cập nhật thiết lập ngủ đông…"},
+    {"Reclaims RAM-sized space if you only use Sleep (disables Fast Startup).",
+     "Giải phóng dung lượng bằng kích thước RAM nếu bạn chỉ dùng Sleep (tắt Fast Startup)."},
+    {"Volume Shadow Copy Storage (Restore Points)", "Lưu trữ Shadow Copy (Điểm khôi phục)"},
+    {"Cap to 5%", "Giới hạn 5%"},
+    {"Cap to 10%", "Giới hạn 10%"},
+    {"Used", "Đã dùng"},
+    {"Allocated", "Đã cấp phát"},
+    {"Max Limit", "Giới hạn tối đa"},
+    {"Click Refresh (requires Administrator) to query shadow storage.",
+     "Bấm Làm mới (cần Quản trị viên) để kiểm tra lưu trữ Shadow Copy."},
+    {"%d items (%s)", "%d mục (%s)"},
+    {"Purge >14 days", "Xóa mục >14 ngày"},
+    {"Expired quarantine items purged", "Đã xóa các mục cách ly quá hạn"},
+    {"Quarantine Vault is empty", "Kho cách ly đang trống"},
+    {"Items removed safely by Old Downloads, Orphaned Installers, or Leftovers appear here for 14 days.",
+     "Các mục được dọn an toàn từ Tải xuống cũ, Bộ cài mồ côi hoặc Dư thừa sẽ lưu ở đây 14 ngày."},
+    {"Restore", "Khôi phục"},
+    {"Item restored", "Đã khôi phục mục"},
+    {"Delete", "Xóa vĩnh viễn"},
+    {"Quarantine item deleted", "Đã xóa vĩnh viễn mục cách ly"},
+    {"Compacting runs 'wsl --shutdown' and stops running WSL/Docker containers.",
+     "Thu gọn sẽ chạy 'wsl --shutdown' và dừng các container WSL/Docker đang chạy."},
+    {"Scan Virtual Disks", "Quét đĩa ảo"},
+    {"Scanning WSL/Docker virtual disks…", "Đang quét đĩa ảo WSL/Docker…"},
+    {"Compact Selected", "Thu gọn mục chọn"},
+    {"Confirm Compact", "Xác nhận thu gọn"},
+    {"Click Confirm Compact to shut down WSL and shrink disks.",
+     "Bấm Xác nhận thu gọn để tắt WSL và nén đĩa ảo."},
+    {"Compacting virtual hard disks…", "Đang thu gọn đĩa cứng ảo…"},
+    {"No WSL/Docker virtual disks found", "Không tìm thấy đĩa ảo WSL/Docker"},
+    {"Click Scan Virtual Disks to discover Docker Desktop and WSL2 .vhdx files.",
+     "Bấm Quét đĩa ảo để tìm các tệp .vhdx của Docker Desktop và WSL2."},
+
+    /* Wave 3: Leftover scanner, Duplicates & Stale Dev Artifacts */
+    {"Residual Leftovers", "Tệp dư thừa"},
+    {"Scan Leftovers", "Quét dư thừa"},
+    {"Scanning for leftover files…", "Đang quét tệp dư thừa…"},
+    {"Scanning AppData & ProgramData…", "Đang quét AppData & ProgramData…"},
+    {"No leftovers found.", "Không tìm thấy tệp dư thừa."},
+    {"High", "Cao"},
+    {"Medium", "Trung bình"},
+    {"Move to Quarantine", "Chuyển vào Kho cách ly"},
+    {"Duplicates", "Tệp trùng lặp"},
+    {"Stale Dev Artifacts", "Thư mục build cũ"},
+    {"Scanning for duplicate files…", "Đang quét tệp trùng lặp…"},
+    {"Scanning for stale dev artifacts…", "Đang quét thư mục build cũ…"},
+    {"Duplicate scan complete", "Quét tệp trùng lặp hoàn tất"},
+    {"Stale artifacts scan complete", "Quét thư mục build cũ hoàn tất"},
+    {"Hashing duplicate candidates…", "Đang băm SHA-256 kiểm tra trùng lặp…"},
+    {"%d duplicate groups (%s reclaimable)", "%d nhóm trùng lặp (có thể thu hồi %s)"},
+    {"Scan Duplicates (1 MB+)", "Quét trùng lặp (1 MB+)"},
+    {"Select Extra Copies", "Chọn bản dư"},
+    {"Move Selected to Quarantine", "Chuyển mục chọn vào Kho cách ly"},
+    {"Find exact duplicate files", "Tìm tệp trùng lặp chính xác"},
+    {"Click Scan Duplicates (1 MB+) to match files by size and SHA-256 while keeping one copy safe.",
+     "Bấm Quét trùng lặp (1 MB+) để đối chiếu kích thước và SHA-256, luôn giữ an toàn 1 bản gốc."},
+    {"No duplicate files found", "Không có tệp trùng lặp"},
+    {"No exact duplicates (1 MB+) were found under this folder.",
+     "Không tìm thấy tệp trùng lặp (1 MB+) trong thư mục này."},
+    {"%s · %d copies", "%s · %d bản"},
+    {"Keep", "Giữ lại"},
+    {"Scanning for stale dev build folders…", "Đang quét thư mục build lập trình cũ…"},
+    {"%d stale folders (%s)", "%d thư mục cũ (%s)"},
+    {"Scan Stale Folders (30d+)", "Quét thư mục cũ (30d+)"},
+    {"Find untouched developer build folders", "Tìm thư mục build lập trình bỏ quên"},
+    {"Finds node_modules, target, .venv, __pycache__, and build directories untouched for 30+ days.",
+     "Tìm node_modules, target, .venv, __pycache__ và build không đụng tới trong 30+ ngày."},
+    {"No stale dev artifacts found", "Không thấy thư mục build cũ"},
+    {"No untouched build/dependency directories (30d+) were found here.",
+     "Không có thư mục build/thư viện nào bị bỏ quên 30+ ngày ở đây."},
+    {"%lldd old", "%lld ngày"},
 };
 
 static const char *const wc_cleaner_walk[] = {
     "cleaner.view_cleaner",
+    "cleaner.view_deep",
     "cleaner.view_startup",
     "cleaner.view_apps",
     "cleaner.view_disk",
@@ -1066,7 +1393,8 @@ static const char *const wc_cleaner_walk[] = {
     "cleaner.view_health",
 };
 
-static const char *const wc_cleaner_prefixes[] = {"clean_log/", "excl/", "cookie_allow/"};
+static const char *const wc_cleaner_prefixes[] = {
+    "clean_log/", "excl/", "cookie_allow/", "quarantine/"};
 
 const wada_product wc_cleaner_product = {
     "cleaner",
