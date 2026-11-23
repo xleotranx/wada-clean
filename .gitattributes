@@ -1,0 +1,56 @@
+# Line endings
+# ============
+# Every text file is stored as LF in the repository and checked out as LF on
+# all platforms, so diffs, `git blame`, CI, and editor tooling are identical
+# on Windows, macOS, and Linux. This overrides any developer's
+# core.autocrlf setting, which otherwise depends on how Git was installed.
+* text=auto eol=lf
+
+# Source and docs (explicit, so the intent survives future edits to the rules
+# above; all of these are also covered by the default).
+*.c     text eol=lf
+*.h     text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.ps1   text eol=lf
+.gitignore  text eol=lf
+.gitmodules text eol=lf
+LICENSE     text eol=lf
+
+# Windows batch files need CRLF: cmd.exe misparses LF-only scripts around
+# labels, GOTO targets, and multi-line blocks.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binary assets
+# =============
+# Never normalize, diff as text, or attempt a merge on these.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.ico    binary
+*.icns   binary
+*.pdf    binary
+*.zip    binary
+*.gz     binary
+*.tar    binary
+*.7z     binary
+*.exe    binary
+*.dll    binary
+*.lib    binary
+*.a      binary
+*.o      binary
+*.obj    binary
+*.pdb    binary
+*.db     binary
+*.sqlite binary
+*.sqlite3 binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary
+*.psd    binary
