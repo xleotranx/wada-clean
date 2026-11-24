@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 project(wada_clean C)
 
+# Shipped binaries must run on a machine with nothing but Windows installed, so
+# link the MinGW runtime (libwinpthread, libgcc, UCRT) statically. Without this a
+# MinGW toolchain produces an exe that fails to start with STATUS_DLL_NOT_FOUND
+# on stock Windows (missing libwinpthread-1.dll).
+if(MINGW)
+    add_link_options(-static -static-libgcc)
+endif()
+
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 

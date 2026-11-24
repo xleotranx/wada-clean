@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+  # Re-run against an existing tag: gh workflow run release.yml --ref v0.1.0
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,6 +27,27 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel
           ctest --test-dir build --output-on-failure
+
+      - name: Strip & verify portable imports
+        shell: pwsh
+        run: |
+          $exe = "build\wada_clean.exe"
+
+          $strip = (Get-Command strip.exe -ErrorAction SilentlyContinue).Source
+          if (-not $strip) { $strip = "C:\mingw64\bin\strip.exe" }
+          if (Test-Path $strip) { & $strip --strip-unneeded $exe }
+
+          $objdump = (Get-Command objdump.exe -ErrorAction SilentlyContinue).Source
+          if (-not $objdump) { $objdump = "C:\mingw64\bin\objdump.exe" }
+          $imports = & $objdump -p $exe |
+            Select-String 'DLL Name:\s*(.+)$' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value.Trim() }
+          Write-Host "imports: $($imports -join ', ')"
+
+          # A shipped exe may only need DLLs present on a stock Windows install.
+          # Any MinGW/MSYS runtime (libwinpthread, libgcc*, msys-*) must be static.
+          $bad = $imports | Where-Object { $_ -match '^(lib|msys-)' }
+          if ($bad) { throw "not portable, links non-system runtime: $($bad -join ', ')" }
 
       - name: Package Windows ZIP
         shell: pwsh
