@@ -42,8 +42,10 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 -LocalWada
 Package a stripped portable Windows ZIP (`dist\wada-clean-v0.1.0-win64.zip` + `.sha256`):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\package.ps1 -LocalWada
+powershell -ExecutionPolicy Bypass -File .\package.ps1 -BuildType Release
 ```
+
+`-BuildType` accepts `Release`, `RelWithDebInfo` (default), `MinSizeRel`, or `Debug`; shipped builds use `Release` to match the tag workflow. Add `-LocalWada` to build against a sibling `..\wada-c` checkout instead of `vendor\wada-c`.
 
 ### macOS (Xcode CLT + CMake + Ninja)
 

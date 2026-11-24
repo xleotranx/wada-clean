@@ -1,12 +1,14 @@
 param(
     [switch]$LocalWada,
-    [string]$Version = "0.1.0"
+    [string]$Version = "0.1.0",
+    [ValidateSet("Release", "RelWithDebInfo", "MinSizeRel", "Debug")]
+    [string]$BuildType = "RelWithDebInfo"
 )
 
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-& (Join-Path $root "build.ps1") -LocalWada:$LocalWada
+& (Join-Path $root "build.ps1") -LocalWada:$LocalWada -BuildType $BuildType
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
 $candidates = @(

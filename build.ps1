@@ -1,5 +1,7 @@
 param(
-    [switch]$LocalWada
+    [switch]$LocalWada,
+    [ValidateSet("Release", "RelWithDebInfo", "MinSizeRel", "Debug")]
+    [string]$BuildType = "RelWithDebInfo"
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,8 +48,10 @@ if ($LocalWada) {
 }
 
 $buildDir = Join-Path $root "build"
+Write-Host "build type: $BuildType"
+
 cmake -S $root -B $buildDir -G Ninja `
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+    "-DCMAKE_BUILD_TYPE=$BuildType" `
     -DCMAKE_C_COMPILER="$bin\gcc.exe" `
     @cmakeExtraArgs
 if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
