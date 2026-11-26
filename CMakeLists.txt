@@ -85,14 +85,13 @@ else()
     message(FATAL_ERROR "Supported platforms are WIN32 and APPLE")
 endif()
 
-# Shipped GUI application. Step 1 of the One Door plan keeps only the surfaces
-# that deliver disk space: health, cleaner, apps, disk. Startup, deep clean,
-# updates, automation, exclusions and the cookie allowlist are gone.
+# Shipped GUI application. Step 2 of the One Door plan: one home screen that
+# answers "how much can I get back?", and one Tools door for everything else.
 add_executable(wada_clean
     src/main.c
     src/ui/wc_product.c
-    src/ui/wc_view_health.c
-    src/ui/wc_view_cleaner.c
+    src/ui/wc_view_home.c
+    src/ui/wc_view_tools.c
     src/ui/wc_view_apps.c
     src/ui/wc_view_disk.c
 )

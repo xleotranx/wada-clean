@@ -73,11 +73,46 @@ void wc_quarantine_reload(wc_cleaner_state *st) {
     }
 }
 
-void wc_health_run_checkup(wc_cleaner_state *st) {
+/* 0 = system/app/dev junk, 1 = browsers, 2 = Recycle Bin. */
+int wc_target_group(const wc_target_def *def) {
+    if (!def) return 0;
+    if (def->kind == WC_TARGET_RECYCLE_BIN) return 2;
+    if (def->category == WC_CAT_BROWSER) return 1;
+    return 0;
+}
+
+void wc_home_apply_group(wc_cleaner_state *st, int group) {
+    if (!st || group < 0 || group > 2) return;
+    for (int i = 0; i < st->target_count; i++) {
+        if (wc_target_group(&st->defs[i]) != group) continue;
+        /* User-data targets that can only be quarantined are never auto-selected. */
+        if (st->defs[i].quarantine) continue;
+        st->selected[i] = st->group_on[group];
+    }
+    wada_ui_confirm_reset(&st->confirm);
+}
+
+void wc_home_refresh_recycle(wc_cleaner_state *st) {
+    if (!st) return;
+    st->recycle_known = wc_plat_query_recycle_bin(&st->recycle_files, &st->recycle_bytes);
+    if (!st->recycle_known) {
+        st->recycle_files = 0;
+        st->recycle_bytes = 0;
+    }
+}
+
+void wc_home_scan(wc_cleaner_state *st) {
     if (!st || st->running) return;
+    st->scan_started = true;
     st->sys_drive_ok =
         wc_plat_disk_free_space(WC_SYS_DRIVE, &st->sys_drive_free, &st->sys_drive_total);
+    wc_home_refresh_recycle(st);
     wc_cleaner_start_analyze(st);
+}
+
+void wc_home_clean(wc_cleaner_state *st) {
+    if (!st) return;
+    wc_cleaner_start_clean(st);
 }
 
 const wc_history_entry *wc_last_clean_run(const wc_cleaner_state *st) {
@@ -126,42 +161,24 @@ void wc_cleaner_cancel_job(wc_cleaner_state *st) {
     wc_worker_cancel(&st->worker);
 }
 
-void wc_cleaner_select_all(wc_cleaner_state *st, bool select) {
-    if (!st || st->running) return;
-    wada_ui_confirm_reset(&st->confirm);
-    for (int i = 0; i < st->target_count; i++) {
-        st->selected[i] = select;
-    }
-}
-
-void wc_cleaner_select_category(wc_cleaner_state *st, wc_category cat, bool select) {
-    if (!st || st->running) return;
-    wada_ui_confirm_reset(&st->confirm);
-    for (int i = 0; i < st->target_count; i++) {
-        if (st->defs[i].category == cat) {
-            st->selected[i] = select;
-        }
-    }
-}
-
 static void cmd_analyze(void *user) {
     wc_cleaner_state *st = (wc_cleaner_state *)user;
-    st->active_view = WC_VIEW_CLEANER;
+    st->active_view = WC_VIEW_HOME;
     st->preview_open = false;
     st->history_open = false;
-    wc_cleaner_start_analyze(st);
+    wc_home_scan(st);
 }
 
 static void cmd_preview_files(void *user) {
     wc_cleaner_state *st = (wc_cleaner_state *)user;
-    st->active_view = WC_VIEW_CLEANER;
+    st->active_view = WC_VIEW_HOME;
     st->history_open = false;
     if (st->has_analyzed && st->preview_ui_count > 0) st->preview_open = true;
 }
 
 static void cmd_view_history(void *user) {
     wc_cleaner_state *st = (wc_cleaner_state *)user;
-    st->active_view = WC_VIEW_CLEANER;
+    st->active_view = WC_VIEW_TOOLS;
     st->preview_open = false;
     if (st->history_count > 0) {
         st->history_selected = 0;
@@ -173,21 +190,15 @@ static void cmd_about(void *user) {
     ((wc_cleaner_state *)user)->about_open = true;
 }
 
-static void cmd_select_all(void *user) {
-    wc_cleaner_select_all((wc_cleaner_state *)user, true);
-}
-
-static void cmd_select_none(void *user) {
-    wc_cleaner_select_all((wc_cleaner_state *)user, false);
-}
-
-static void cmd_view_health(void *user) {
-    ((wc_cleaner_state *)user)->active_view = WC_VIEW_HEALTH;
-}
-
-static void cmd_view_cleaner(void *user) {
+static void cmd_view_home(void *user) {
     wc_cleaner_state *st = (wc_cleaner_state *)user;
-    st->active_view = WC_VIEW_CLEANER;
+    st->active_view = WC_VIEW_HOME;
+    st->preview_open = false;
+}
+
+static void cmd_view_tools(void *user) {
+    wc_cleaner_state *st = (wc_cleaner_state *)user;
+    st->active_view = WC_VIEW_TOOLS;
     st->preview_open = false;
     st->history_open = false;
 }
@@ -251,12 +262,15 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     }
     st->app = app;
     snprintf(st->data_dir, sizeof st->data_dir, "%s", data_dir ? data_dir : "");
-    st->active_view = WC_VIEW_HEALTH;
+    st->active_view = WC_VIEW_HOME;
     st->is_admin = wc_plat_is_admin();
     st->dry_run = g_initial_dry_run;
     st->app_selected = -1;
     st->apps_last_sort = -1;
     st->apps_last_version = -1;
+    st->group_on[0] = true;
+    st->group_on[1] = true;
+    st->group_on[2] = false;
     wada_ui_confirm_init(&st->confirm);
     wada_ui_confirm_init(&st->app_confirm);
 
@@ -305,7 +319,7 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     for (int i = 0; i < count; i++) {
         const wc_target_def *def = wc_rules_get(i);
         st->defs[i] = *def;
-        st->selected[i] = def->default_enabled;
+        st->selected[i] = !def->quarantine && st->group_on[wc_target_group(def)];
         if (def->kind == WC_TARGET_RECYCLE_BIN) {
             snprintf(st->resolved_paths[i], sizeof st->resolved_paths[i], "Recycle Bin");
         } else if (!wc_rules_resolve_path(def, st->resolved_paths[i], sizeof st->resolved_paths[i])) {
@@ -365,16 +379,14 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
         }
     }
 
-    wada_app_command(app, scope, "cleaner.view_health", "Open PC Health Check", NULL, cmd_view_health, st);
-    wada_app_command(app, scope, "cleaner.view_cleaner", "Open Junk Cleaner", NULL, cmd_view_cleaner, st);
-    wada_app_command(app, scope, "cleaner.view_apps", "Open Installed Apps", NULL, cmd_view_apps, st);
-    wada_app_command(app, scope, "cleaner.view_disk", "Open Disk Space Analyzer", NULL, cmd_view_disk, st);
-    wada_app_command(app, scope, "cleaner.analyze", "Analyze all junk targets", NULL, cmd_analyze, st);
-    wada_app_command(app, scope, "cleaner.preview_files", "Preview sampled files", NULL, cmd_preview_files, st);
+    wada_app_command(app, scope, "cleaner.view_home", "Free up space", NULL, cmd_view_home, st);
+    wada_app_command(app, scope, "cleaner.view_tools", "Tools", NULL, cmd_view_tools, st);
+    wada_app_command(app, scope, "cleaner.view_apps", "Installed Apps", NULL, cmd_view_apps, st);
+    wada_app_command(app, scope, "cleaner.view_disk", "Space breakdown", NULL, cmd_view_disk, st);
+    wada_app_command(app, scope, "cleaner.analyze", "Scan for reclaimable space", NULL, cmd_analyze, st);
+    wada_app_command(app, scope, "cleaner.preview_files", "Review what will be removed", NULL, cmd_preview_files, st);
     wada_app_command(app, scope, "cleaner.view_history", "View latest clean run", NULL, cmd_view_history, st);
     wada_app_command(app, scope, "app.about", "About", NULL, cmd_about, st);
-    wada_app_command(app, scope, "cleaner.select_all", "Select all cleaner targets", NULL, cmd_select_all, st);
-    wada_app_command(app, scope, "cleaner.select_none", "Deselect all cleaner targets", NULL, cmd_select_none, st);
     return st;
 }
 
@@ -411,10 +423,12 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
                 st->preview_ui_count =
                     wc_worker_preview_copy(&st->worker, st->preview_items, WC_MAX_PREVIEW);
                 st->preview_ui_truncated = wc_worker_preview_truncated(&st->worker);
+                wc_home_refresh_recycle(st);
                 wada_app_set_status(app, wada_tr("Analysis complete"));
             } else if (st->snap.kind == WC_JOB_CLEAN) {
                 record_clean_history(st);
                 wc_quarantine_reload(st);
+                wc_home_refresh_recycle(st);
                 st->sys_drive_ok = wc_plat_disk_free_space(WC_SYS_DRIVE, &st->sys_drive_free,
                                                            &st->sys_drive_total);
                 wada_app_set_status(
@@ -508,33 +522,23 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
             cui_text(ui, wada_tr("Wada Clean"), .font = CUI_FONT_DISPLAY, .size = 18);
             cui_text(ui, wada_tr("System Utility"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
 
-            if (cui_nav_item(ui, wada_tr("Health Check"), .icon = CUI_ICON_SHIELD,
-                             .selected = st->active_view == WC_VIEW_HEALTH,
+            if (cui_nav_item(ui, wada_tr("Free up space"), .icon = CUI_ICON_SPARKLES,
+                             .selected = st->active_view == WC_VIEW_HOME,
                              .group = "wc-nav")) {
-                st->active_view = WC_VIEW_HEALTH;
+                st->active_view = WC_VIEW_HOME;
+                st->preview_open = false;
             }
-            if (cui_nav_item(ui, wada_tr("Cleaner"), .icon = CUI_ICON_SPARKLES,
-                             .selected = st->active_view == WC_VIEW_CLEANER,
+            bool in_tools = st->active_view == WC_VIEW_TOOLS || st->active_view == WC_VIEW_APPS ||
+                            st->active_view == WC_VIEW_DISK;
+            if (cui_nav_item(ui, wada_tr("Tools"), .icon = CUI_ICON_SETTINGS, .selected = in_tools,
                              .group = "wc-nav")) {
-                st->active_view = WC_VIEW_CLEANER;
-            }
-            if (cui_nav_item(ui, wada_tr("Apps"), .icon = CUI_ICON_PACKAGE,
-                             .selected = st->active_view == WC_VIEW_APPS,
-                             .group = "wc-nav")) {
-                st->active_view = WC_VIEW_APPS;
-            }
-            if (cui_nav_item(ui, wada_tr("Disk Analyzer"), .icon = CUI_ICON_FOLDER_OPEN,
-                             .selected = st->active_view == WC_VIEW_DISK,
-                             .group = "wc-nav")) {
-                st->active_view = WC_VIEW_DISK;
+                st->active_view = WC_VIEW_TOOLS;
+                st->preview_open = false;
+                st->history_open = false;
             }
 
             cui_box(ui, .height = CUI_FILL) {}
 
-            if (cui_button(ui, wada_tr("About"), .variant = CUI_BUTTON_GHOST,
-                           .size = CUI_SIZE_SM, .icon = CUI_ICON_INFO, .full_width = true)) {
-                st->about_open = true;
-            }
             if (!st->is_admin) {
                 if (cui_button(ui, wada_tr("Restart as Admin"), .variant = CUI_BUTTON_OUTLINE,
                                .size = CUI_SIZE_SM, .icon = CUI_ICON_SHIELD, .full_width = true)) {
@@ -550,11 +554,11 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
         /* Active view */
         cui_column(ui, .width = CUI_FILL, .height = CUI_FILL) {
             switch (st->active_view) {
-            case WC_VIEW_HEALTH:
-                wc_view_health_draw(st, app);
+            case WC_VIEW_HOME:
+                wc_view_home_draw(st, app);
                 break;
-            case WC_VIEW_CLEANER:
-                wc_view_cleaner_draw(st, app);
+            case WC_VIEW_TOOLS:
+                wc_view_tools_draw(st, app);
                 break;
             case WC_VIEW_APPS:
                 wc_view_apps_draw(st, app);

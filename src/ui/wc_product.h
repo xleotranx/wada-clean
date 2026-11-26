@@ -24,12 +24,11 @@
     cui_column((ui), .id = (list_id), .width = CUI_FILL, .height = CUI_FILL,            \
                .scroll_y = true, .gap = (item_gap), .pad_bottom = WC_SCROLL_PAD_BOTTOM)
 
-/* Step 1 of the One Door plan: the product promises disk space, so only the
- * surfaces that deliver it remain. Startup, deep maintenance, updates,
- * automation, exclusions and the cookie allowlist are gone. */
+/* Step 2 of the One Door plan: one home that answers "how much can I get
+ * back?", and a single Tools door for everything else. */
 typedef enum wc_view_id {
-    WC_VIEW_HEALTH = 0,
-    WC_VIEW_CLEANER = 1,
+    WC_VIEW_HOME = 0,
+    WC_VIEW_TOOLS = 1,
     WC_VIEW_APPS = 2,
     WC_VIEW_DISK = 3
 } wc_view_id;
@@ -113,6 +112,14 @@ typedef struct wc_cleaner_state {
     char disk_root[WC_PATH_CAP];
     int disk_tab;
 
+    /* Home: three user-facing decisions. 0 = system/app/dev junk, 1 = browsers,
+     * 2 = Recycle Bin. The internal rules never surface as checkboxes. */
+    bool group_on[3];
+    bool scan_started;
+    uint64_t recycle_files;
+    uint64_t recycle_bytes;
+    bool recycle_known;
+
     char data_dir[WC_PATH_CAP];
     char status[128];
 } wc_cleaner_state;
@@ -121,23 +128,29 @@ void wc_cleaner_set_initial_dry_run(bool dry_run);
 bool wc_cleaner_take_relaunch_admin(void);
 void wc_relaunch_admin(wc_cleaner_state *st, wada_app *app);
 
-void wc_health_run_checkup(wc_cleaner_state *st);
+/* Home screen actions. */
+void wc_home_scan(wc_cleaner_state *st);
+void wc_home_clean(wc_cleaner_state *st);
+void wc_home_apply_group(wc_cleaner_state *st, int group);
+void wc_home_refresh_recycle(wc_cleaner_state *st);
+
+/* 0 = system/app/dev junk, 1 = browsers, 2 = Recycle Bin. */
+int wc_target_group(const wc_target_def *def);
+
 void wc_cleaner_start_analyze(wc_cleaner_state *st);
 void wc_cleaner_start_clean(wc_cleaner_state *st);
 
 /* Newest completed (non-preview) run, or NULL when only dry runs exist. */
 const wc_history_entry *wc_last_clean_run(const wc_cleaner_state *st);
 void wc_cleaner_cancel_job(wc_cleaner_state *st);
-void wc_cleaner_select_all(wc_cleaner_state *st, bool select);
-void wc_cleaner_select_category(wc_cleaner_state *st, wc_category cat, bool select);
 
 void wc_exclusions_reload(wc_cleaner_state *st);
 void wc_quarantine_reload(wc_cleaner_state *st);
 void wc_apps_refresh(wc_cleaner_state *st);
 void wc_disk_start_scan(wc_cleaner_state *st);
 
-void wc_view_health_draw(wc_cleaner_state *st, wada_app *app);
-void wc_view_cleaner_draw(wc_cleaner_state *st, wada_app *app);
+void wc_view_home_draw(wc_cleaner_state *st, wada_app *app);
+void wc_view_tools_draw(wc_cleaner_state *st, wada_app *app);
 void wc_view_apps_draw(wc_cleaner_state *st, wada_app *app);
 void wc_view_disk_draw(wc_cleaner_state *st, wada_app *app);
 

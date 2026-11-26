@@ -63,6 +63,10 @@ void wc_view_disk_draw(wc_cleaner_state *st, wada_app *app) {
     bool any_busy = st->disk_running || st->disk_extra_running;
 
     cui_column(ui, .width = CUI_FILL, .height = CUI_FILL, .pad = 20, .gap = 12) {
+        if (cui_button(ui, wada_tr("Back to Tools"), .variant = CUI_BUTTON_GHOST,
+                       .size = CUI_SIZE_SM, .icon = CUI_ICON_CHEVRON_LEFT)) {
+            st->active_view = WC_VIEW_TOOLS;
+        }
         cui_column(ui, .gap = 2) {
             cui_text(ui, wada_tr("Disk Space Analyzer"), .font = CUI_FONT_DISPLAY, .size = 24);
             cui_text(ui, wada_tr("Find large folders and files without modifying anything on disk."),

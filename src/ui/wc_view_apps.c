@@ -97,6 +97,10 @@ void wc_view_apps_draw(wc_cleaner_state *st, wada_app *app) {
     const char *sort_labels[2] = {wada_tr("Name"), wada_tr("Size")};
 
     cui_column(ui, .width = CUI_FILL, .height = CUI_FILL, .pad = 20, .gap = 12) {
+        if (cui_button(ui, wada_tr("Back to Tools"), .variant = CUI_BUTTON_GHOST,
+                       .size = CUI_SIZE_SM, .icon = CUI_ICON_CHEVRON_LEFT)) {
+            st->active_view = WC_VIEW_TOOLS;
+        }
         cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER,
                 .justify = CUI_JUSTIFY_BETWEEN, .gap = 12) {
             cui_column(ui, .gap = 2) {

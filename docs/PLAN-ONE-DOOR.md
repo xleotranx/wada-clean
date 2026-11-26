@@ -269,4 +269,32 @@ Any failure = not done. No "polish it a bit".
 
 ---
 
-*Next: sign-off on step 2 (merge Health + Cleaner into one home, add the Tools door, nav 4 → 2).*
+### Step 2 — done (2026-11-26)
+
+**Shipped:** Health and Cleaner merged into one `Free up space` home. It scans on first paint — there is no `Analyze` button, no target checklist and no `Preview only` switch. Three rows (System junk, Browser junk, Recycle Bin) carry the whole decision; the 27 internal rules are grouped behind them. Nav is now **Free up space · Tools**. `Tools` is a door to Apps, Space and History; Apps and Disk gained a `Back to Tools` control. The sampled-file panel became the `Review` screen.
+
+**Selections and defaults**
+- Group membership is by rule category: System = SYSTEM + APPS + DEV caches, Browser = the four browser-cache rules, Recycle Bin = the one rule.
+- Defaults: System on, Browser on, Recycle Bin off. Dev caches are now **on by default** inside System junk (plan §0 correction) — a deliberate behaviour change from v0.1, where they were opt-in.
+- Targets flagged `quarantine` (the 30-day installers rule) are never auto-selected by a group switch. That rule is removed in step 5.
+- Recycle Bin size and item count are queried on every scan, even while the group is off, so the row can state the consequence before it is enabled.
+
+**Trust fix found during the capture pass (worth naming):** the first build of the home headline added up every selected target, including browser caches that the cleaner skips while the browser is open. It promised 1017.9 MB and could only deliver 462 MB. `selected_bytes()` now excludes any target that will be skipped, the browser row says `browser open — skipped`, and the Review totals carry the same note. The done state states how many items were skipped, and the hero copy claims only that nothing personal was touched.
+
+**Evidence**
+- Build clean, `ctest` green: 661 checks across 8 suites, still no test source edited.
+- Renders: `one-door-step2-home.png`, `one-door-step2-tools.png`, `one-door-step2-review.png` (real CUI captures, scratch data dir).
+- `src/ui`: 2,857 → **2,580 lines** — smaller than step 1 even with two brand-new screens. The two biggest single files (health 226, cleaner 814) became home 384 + tools 241, and the product shell shrank from 1,229 to 1,120.
+- Stripped binary: 4,159,364 → **3,200,512 bytes (−23.1%)**.
+
+**Deviations / interim states**
+1. **Vietnamese copy for new strings is not written yet.** New labels fall back to English under `--lang vi`. Listed as open question 2; a native pass is needed before release.
+2. **New strings are not yet in the i18n table** — same reason; step 5 prunes, then adds.
+3. **Big-apps strip and simplified Space view are step 4.** `Space` still shows the four-tab analyzer including duplicates and stale dev artifacts.
+4. **Status bar still prints `dark 0.1.0`** and `Analysis complete`; step 3.
+5. **Group switches after a scan don't rescore the rows.** Sizes describe what was found, not the current selection; the headline does track selection. Acceptable now, worth a second look in step 3.
+6. **Clean confirmation is still the two-click button.** Step 3 owns the final copy and the Recycle Bin consequence line.
+
+---
+
+*Next: sign-off on step 3 (harden the one destructive decision, honest status bar).*
