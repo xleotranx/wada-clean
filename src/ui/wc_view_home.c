@@ -6,11 +6,17 @@
 
 #include "wada_app.h"
 #include "wada_i18n.h"
+#include "wc_platform.h"
 #include "wc_safety.h"
 
 /* How many sampled files the Review panel lists. The sample itself is capped by
  * the worker; this is a reading limit, not a scan limit. */
 #define HOME_SAMPLE_ROWS 10
+
+/* An app earns a spot on the home screen only if removing it is worth the trip:
+ * half a gigabyte or more, and something we can actually uninstall. */
+#define HOME_APP_MIN_BYTES (512ULL * 1024ULL * 1024ULL)
+#define HOME_APP_ROWS 3
 
 static void group_totals(const wc_cleaner_state *st, int group, uint64_t *bytes, uint64_t *files,
                          int *targets, int *browsers_running, int *admin_skipped) {
@@ -143,8 +149,86 @@ static void draw_group_row(wc_cleaner_state *st, wada_app *app, cui_ctx *ui, int
     }
 }
 
-static void draw_review(wc_cleaner_state *st, cui_ctx *ui) {
-    int order[WC_MAX_PREVIEW];
+static int top_apps_by_size(const wc_cleaner_state *st, int *out, int max) {
+    int n = 0;
+    for (int i = 0; i < st->app_count; i++) {
+        const wc_app_item *it = &st->app_items[i];
+        if (it->estimated_size_bytes < HOME_APP_MIN_BYTES) continue;
+        if (!it->uninstall_cmd[0]) continue;
+        int pos = n;
+        while (pos > 0 &&
+               st->app_items[out[pos - 1]].estimated_size_bytes < it->estimated_size_bytes) {
+            pos--;
+        }
+        if (pos >= max) continue;
+        int last = (n < max) ? n : max - 1;
+        for (int k = last; k > pos; k--) out[k] = out[k - 1];
+        out[pos] = i;
+        if (n < max) n++;
+    }
+    return n;
+}
+
+static void draw_big_apps(wc_cleaner_state *st, wada_app *app, cui_ctx *ui) {
+    if (!st->apps_loaded) return;
+    int picks[HOME_APP_ROWS];
+    int n = top_apps_by_size(st, picks, HOME_APP_ROWS);
+    if (n == 0) return;
+
+    uint64_t total = 0;
+    for (int i = 0; i < n; i++) total += st->app_items[picks[i]].estimated_size_bytes;
+    char total_str[32];
+    wc_format_bytes(total, total_str, sizeof total_str);
+
+    char heading[96];
+    wada_trf(heading, sizeof heading, "%d apps use %s", n, total_str);
+
+    cui_card(ui, .width = CUI_FILL, .pad = 14, .gap = 8) {
+        cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER,
+                .justify = CUI_JUSTIFY_BETWEEN, .gap = 10) {
+            cui_column(ui, .gap = 2) {
+                cui_text(ui, wada_tr("Big apps"), .font = CUI_FONT_MEDIUM, .size = 15);
+                cui_text(ui, heading, .size = 12, .color = CUI_COLOR_TEXT_MUTED);
+            }
+            if (cui_button(ui, wada_tr("Open Apps"), .variant = CUI_BUTTON_GHOST,
+                           .size = CUI_SIZE_SM)) {
+                st->active_view = WC_VIEW_APPS;
+            }
+        }
+        for (int i = 0; i < n; i++) {
+            const wc_app_item *it = &st->app_items[picks[i]];
+            char size_str[32];
+            wc_format_bytes(it->estimated_size_bytes, size_str, sizeof size_str);
+            char row_id[32];
+            snprintf(row_id, sizeof row_id, "home-app-%d", picks[i]);
+            cui_id_scope(ui, row_id) {
+                cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER,
+                        .justify = CUI_JUSTIFY_BETWEEN, .gap = 10) {
+                    cui_column(ui, .gap = 2) {
+                        cui_text(ui, it->name, .size = 13);
+                        if (it->publisher[0]) {
+                            cui_text(ui, it->publisher, .size = 12, .color = CUI_COLOR_TEXT_MUTED);
+                        }
+                    }
+                    cui_row(ui, .align = CUI_ALIGN_CENTER, .gap = 10) {
+                        cui_text(ui, size_str, .size = 13, .tabular = true);
+                        if (cui_button(ui, wada_tr("Uninstall"), .variant = CUI_BUTTON_OUTLINE,
+                                       .size = CUI_SIZE_SM, .disabled = st->running)) {
+                            if (wc_plat_launch_uninstaller(it->uninstall_cmd)) {
+                                wada_app_set_status(app, wada_tr("Uninstaller launched"));
+                            } else {
+                                wada_app_set_status(app, wada_tr("Failed to launch uninstaller"));
+                            }
+                        }
+                    }
+                }
+            }
+            if (i + 1 < n) cui_separator(ui);
+        }
+    }
+}
+
+static void draw_review(wc_cleaner_state *st, cui_ctx *ui) {    int order[WC_MAX_PREVIEW];
     int n = 0;
     for (int p = 0; p < st->preview_ui_count; p++) {
         if (!id_selected(st, st->preview_items[p].target_id)) continue;
@@ -251,6 +335,8 @@ void wc_view_home_draw(wc_cleaner_state *st, wada_app *app) {
 
     /* One scan, automatically. The user never presses "Analyze". */
     if (!st->scan_started && !st->running) wc_home_scan(st);
+    /* Large-app data is collected in the background, on a worker. */
+    if (!st->apps_loaded && !st->apps_loading) wc_apps_refresh(st);
 
     if (st->preview_open) {
         draw_review(st, ui);
@@ -408,6 +494,8 @@ void wc_view_home_draw(wc_cleaner_state *st, wada_app *app) {
         draw_group_row(st, app, ui, 0, wada_tr("System junk"), CUI_ICON_CPU);
         draw_group_row(st, app, ui, 1, wada_tr("Browser junk"), CUI_ICON_GLOBE);
         draw_group_row(st, app, ui, 2, wada_tr("Recycle Bin"), CUI_ICON_TRASH_2);
+
+        draw_big_apps(st, app, ui);
 
         /* Footer */
         cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER,

@@ -325,4 +325,31 @@ The right side of the status bar (`dark  0.1.0`) is drawn by the shell at `vendo
 
 ---
 
-*Next: sign-off on step 4 (big apps on the home screen, simplified Space view, Teams cache behind path verification).*
+### Step 4 — done (2026-11-26)
+
+**Shipped**
+- **Big apps on the home screen.** A card lists up to three installed apps of **512 MB or more** that expose an uninstall command, sorted by size, with the total (`3 apps use 3.34 GB`), a per-row `Uninstall` that launches the vendor uninstaller, and `Open Apps`. The list is enumerated on the existing worker thread, so the home screen never blocks; the card simply doesn't exist until there is something worth uninstalling. This is the feature that keeps the app from being "too simple": removing a 40 GB game is the honest way to get 40 GB.
+- **Space view simplified.** The four tabs are gone. `Space` is now two live columns — *Largest folders* (with share-of-scan bars) and *Largest files* — plus the path bar, quick presets and totals. No duplicates, no stale-dev scanning, no quarantine buttons: it is read-only, and the subtitle says so. Title matches the Tools card.
+- **Disk extras left the product layer.** `disk_extra_worker`, duplicate/stale snapshots and their poll/quarantine wiring are removed from the app; the engine code stays compiled and tested until step 5.
+- Disk scan completion now reports facts (`Scan complete — 5.4 MB across 40 files`) instead of `Disk analysis complete`.
+
+**Teams cache — deliberately not shipped (gate not met)**
+The plan gated this on confirming the cache paths against a real Teams install. Teams is not installed on this machine, and the two candidate locations differ in a way that matters:
+- classic: `%APPDATA%\Microsoft\Teams\Cache`
+- new: `%LOCALAPPDATA%\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\EBWebView\Default\Cache`
+
+The parent `...\MSTeams` directory holds the profile; WebView2 cache subfolders also vary (`Cache` vs `Code Cache`). Guessing the exact leaf risks deleting profile state instead of cache, and even a correct guess cannot be demonstrated here — the rule would resolve to nothing, and we would be shipping a feature with zero evidence. It ships the moment someone with Teams confirms the path; the rule is a three-line addition (env var + subpath) plus a group membership that already exists.
+
+**Evidence**
+- `ctest` green: 662 checks, 8 suites, no test source edited.
+- Renders: `one-door-step4-home.png`, `one-door-step4-space.png`.
+- UI 2,580 → **2,496 lines**; stripped binary **3,197,952 bytes** (76.9% of v0.1.0).
+
+**Interim / known**
+- On a machine with three big apps the home card extends past the first fold; the column scrolls, but the first screen now ends mid-card. Worth a spacing pass in step 5.
+- Apps view still carries the *Residual Leftovers* section; it leaves with the engine in step 5.
+- Duplicate/stale engines remain compiled and tested though nothing calls them; step 5 deletes them with their tests.
+
+---
+
+*Next: sign-off on step 5 (delete the retired engines, platform backends, tests, i18n sweep, README/PLAN rewrite, version 0.2.0).*

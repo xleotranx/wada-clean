@@ -360,30 +360,22 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
 
     st->app_items = (wc_app_item *)calloc(WC_MAX_APPS, sizeof *st->app_items);
     st->leftover_snap = (wc_leftover_snapshot *)calloc(1, sizeof *st->leftover_snap);
-    st->dup_snap = (wc_dup_snapshot *)calloc(1, sizeof *st->dup_snap);
-    st->stale_snap = (wc_stale_snapshot *)calloc(1, sizeof *st->stale_snap);
-    if (!st->app_items || !st->leftover_snap || !st->dup_snap || !st->stale_snap) {
+    if (!st->app_items || !st->leftover_snap) {
         free(st->app_items);
         free(st->leftover_snap);
-        free(st->dup_snap);
-        free(st->stale_snap);
         free(st);
         wada_err_set(err, WADA_ERR_NOMEM, "cleaner buffers");
         return NULL;
     }
 
     if (!wc_worker_init(&st->worker) || !wc_disk_worker_init(&st->disk_worker) ||
-        !wc_disk_extra_init(&st->disk_extra_worker) || !wc_list_job_init(&st->app_job) ||
-        !wc_leftover_worker_init(&st->leftover_worker)) {
+        !wc_list_job_init(&st->app_job) || !wc_leftover_worker_init(&st->leftover_worker)) {
         wc_leftover_worker_destroy(&st->leftover_worker);
         wc_list_job_destroy(&st->app_job);
-        wc_disk_extra_destroy(&st->disk_extra_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
         free(st->app_items);
         free(st->leftover_snap);
-        free(st->dup_snap);
-        free(st->stale_snap);
         free(st);
         wada_err_set(err, WADA_ERR, "worker init");
         return NULL;
@@ -412,13 +404,10 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     if (!ops) {
         wc_leftover_worker_destroy(&st->leftover_worker);
         wc_list_job_destroy(&st->app_job);
-        wc_disk_extra_destroy(&st->disk_extra_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
         free(st->app_items);
         free(st->leftover_snap);
-        free(st->dup_snap);
-        free(st->stale_snap);
         free(st);
         return NULL;
     }
@@ -431,13 +420,10 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
         wc_history_close(&st->history);
         wc_leftover_worker_destroy(&st->leftover_worker);
         wc_list_job_destroy(&st->app_job);
-        wc_disk_extra_destroy(&st->disk_extra_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
         free(st->app_items);
         free(st->leftover_snap);
-        free(st->dup_snap);
-        free(st->stale_snap);
         free(st);
         return NULL;
     }
@@ -456,7 +442,6 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
             wc_quarantine_reload(st);
             wc_worker_set_quarantine(&st->worker, &st->quarantine);
             wc_leftover_worker_set_quarantine(&st->leftover_worker, &st->quarantine);
-            wc_disk_extra_set_quarantine(&st->disk_extra_worker, &st->quarantine);
         }
     }
 
@@ -476,7 +461,6 @@ static void wc_cleaner_leave(void *state) {
     if (!st) return;
     wc_leftover_worker_destroy(&st->leftover_worker);
     wc_list_job_destroy(&st->app_job);
-    wc_disk_extra_destroy(&st->disk_extra_worker);
     wc_disk_worker_destroy(&st->disk_worker);
     wc_worker_destroy(&st->worker);
     wc_exclusions_close(&st->exclusions);
@@ -484,8 +468,6 @@ static void wc_cleaner_leave(void *state) {
     wc_history_close(&st->history);
     free(st->app_items);
     free(st->leftover_snap);
-    free(st->dup_snap);
-    free(st->stale_snap);
     free(st);
 }
 
@@ -530,9 +512,13 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
     if (st->disk_running && !disk_now) {
         st->disk_running = false;
         if (st->disk_snap.state == WC_JOB_DONE) {
-            wada_app_set_status(app, wada_tr("Disk analysis complete"));
+            char sz[32], msg[160];
+            wc_format_bytes(st->disk_snap.total_bytes, sz, sizeof sz);
+            wada_trf(msg, sizeof msg, "Scan complete — %s across %llu files", sz,
+                     (unsigned long long)st->disk_snap.total_files);
+            wada_app_set_status(app, msg);
         } else if (st->disk_snap.state == WC_JOB_CANCELLED) {
-            wada_app_set_status(app, wada_tr("Disk analysis cancelled"));
+            wada_app_set_status(app, wada_tr("Scan cancelled."));
         } else if (st->disk_snap.state == WC_JOB_ERROR && st->disk_snap.error_msg[0]) {
             wada_app_set_status(app, st->disk_snap.error_msg);
         }
@@ -568,30 +554,7 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
         st->leftover_running = true;
     }
 
-    bool dex_now = (st->dup_snap && st->stale_snap)
-                       ? wc_disk_extra_poll(&st->disk_extra_worker, st->dup_snap, st->stale_snap,
-                                            &st->disk_extra_op)
-                       : false;
-    if (st->disk_extra_running && !dex_now) {
-        st->disk_extra_running = false;
-        wc_quarantine_reload(st);
-        if (st->disk_extra_op == WC_DEXTRA_DUPS && st->dup_snap->state == WC_JOB_DONE) {
-            wada_app_set_status(app, wada_tr("Duplicate scan complete"));
-        } else if (st->disk_extra_op == WC_DEXTRA_STALE && st->stale_snap->state == WC_JOB_DONE) {
-            wada_app_set_status(app, wada_tr("Stale artifacts scan complete"));
-        } else if (st->disk_extra_op == WC_DEXTRA_QUARANTINE) {
-            if (st->dup_snap->output_summary[0]) {
-                wada_app_set_status(app, st->dup_snap->output_summary);
-            } else if (st->stale_snap->output_summary[0]) {
-                wada_app_set_status(app, st->stale_snap->output_summary);
-            }
-        }
-    } else if (dex_now) {
-        st->disk_extra_running = true;
-    }
-
-    if (st->running || st->disk_running || st->disk_extra_running || st->leftover_running ||
-        st->apps_loading) {
+    if (st->running || st->disk_running || st->leftover_running || st->apps_loading) {
         cui_request_wakeup(ui, 0.05f);
     }
 

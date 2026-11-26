@@ -100,17 +100,11 @@ typedef struct wc_cleaner_state {
     wc_leftover_snapshot *leftover_snap;
     bool leftover_running;
 
-    /* Disk Analyzer view */
+    /* Space view */
     wc_disk_worker disk_worker;
     wc_disk_snapshot disk_snap;
     bool disk_running;
-    wc_disk_extra_worker disk_extra_worker;
-    wc_dup_snapshot *dup_snap;
-    wc_stale_snapshot *stale_snap;
-    wc_disk_extra_op disk_extra_op;
-    bool disk_extra_running;
     char disk_root[WC_PATH_CAP];
-    int disk_tab;
 
     /* Home: three user-facing decisions. 0 = system/app/dev junk, 1 = browsers,
      * 2 = Recycle Bin. The internal rules never surface as checkboxes. */
