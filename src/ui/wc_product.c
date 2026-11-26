@@ -62,17 +62,6 @@ void wc_exclusions_reload(wc_cleaner_state *st) {
     }
 }
 
-void wc_cookies_reload(wc_cleaner_state *st) {
-    if (!st || !st->cookies.open) return;
-    wada_err err;
-    wada_err_clear(&err);
-    int count = 0;
-    if (wc_cookies_list(&st->cookies, st->cookie_items, WC_MAX_COOKIE_ALLOW, &count, &err) ==
-        WADA_OK) {
-        st->cookie_count = count;
-    }
-}
-
 void wc_quarantine_reload(wc_cleaner_state *st) {
     if (!st || !st->quarantine.open) return;
     wada_err err;
@@ -88,7 +77,6 @@ void wc_health_run_checkup(wc_cleaner_state *st) {
     if (!st || st->running) return;
     st->sys_drive_ok =
         wc_plat_disk_free_space(WC_SYS_DRIVE, &st->sys_drive_free, &st->sys_drive_total);
-    wc_startup_refresh(st);
     wc_cleaner_start_analyze(st);
 }
 
@@ -185,14 +173,6 @@ static void cmd_about(void *user) {
     ((wc_cleaner_state *)user)->about_open = true;
 }
 
-static void draw_shortcut_row(cui_ctx *ui, const char *label, const char *keys) {
-    cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .justify = CUI_JUSTIFY_BETWEEN,
-            .gap = 12) {
-        cui_text(ui, label, .size = 13);
-        cui_kbd(ui, keys);
-    }
-}
-
 static void cmd_select_all(void *user) {
     wc_cleaner_select_all((wc_cleaner_state *)user, true);
 }
@@ -212,32 +192,12 @@ static void cmd_view_cleaner(void *user) {
     st->history_open = false;
 }
 
-static void cmd_view_startup(void *user) {
-    ((wc_cleaner_state *)user)->active_view = WC_VIEW_STARTUP;
-}
-
 static void cmd_view_apps(void *user) {
     ((wc_cleaner_state *)user)->active_view = WC_VIEW_APPS;
 }
 
 static void cmd_view_disk(void *user) {
     ((wc_cleaner_state *)user)->active_view = WC_VIEW_DISK;
-}
-
-static void cmd_view_updater(void *user) {
-    ((wc_cleaner_state *)user)->active_view = WC_VIEW_UPDATER;
-}
-
-static void cmd_view_exclusions(void *user) {
-    ((wc_cleaner_state *)user)->active_view = WC_VIEW_EXCLUSIONS;
-}
-
-static void cmd_view_automation(void *user) {
-    ((wc_cleaner_state *)user)->active_view = WC_VIEW_AUTOMATION;
-}
-
-static void cmd_view_deep(void *user) {
-    ((wc_cleaner_state *)user)->active_view = WC_VIEW_DEEP;
 }
 
 static void record_clean_history(wc_cleaner_state *st) {
@@ -297,30 +257,18 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     st->app_selected = -1;
     st->apps_last_sort = -1;
     st->apps_last_version = -1;
-    st->sched_hour = 3.0;
-    st->updater_snap.winget_available = true;
-    st->cookie_dry_run = true;
-    st->deep_restore_point = true;
-    st->deep_drivers_unused_only = true;
     wada_ui_confirm_init(&st->confirm);
     wada_ui_confirm_init(&st->app_confirm);
-    wada_ui_confirm_init(&st->cookie_confirm);
-    wada_ui_confirm_init(&st->deep_confirm);
 
     st->sys_drive_ok =
         wc_plat_disk_free_space(WC_SYS_DRIVE, &st->sys_drive_free, &st->sys_drive_total);
 
-    st->startup_items = (wc_startup_item *)calloc(WC_MAX_STARTUP, sizeof *st->startup_items);
     st->app_items = (wc_app_item *)calloc(WC_MAX_APPS, sizeof *st->app_items);
-    st->deep_snap = (wc_deep_snapshot *)calloc(1, sizeof *st->deep_snap);
     st->leftover_snap = (wc_leftover_snapshot *)calloc(1, sizeof *st->leftover_snap);
     st->dup_snap = (wc_dup_snapshot *)calloc(1, sizeof *st->dup_snap);
     st->stale_snap = (wc_stale_snapshot *)calloc(1, sizeof *st->stale_snap);
-    if (!st->startup_items || !st->app_items || !st->deep_snap || !st->leftover_snap ||
-        !st->dup_snap || !st->stale_snap) {
-        free(st->startup_items);
+    if (!st->app_items || !st->leftover_snap || !st->dup_snap || !st->stale_snap) {
         free(st->app_items);
-        free(st->deep_snap);
         free(st->leftover_snap);
         free(st->dup_snap);
         free(st->stale_snap);
@@ -330,23 +278,14 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     }
 
     if (!wc_worker_init(&st->worker) || !wc_disk_worker_init(&st->disk_worker) ||
-        !wc_disk_extra_init(&st->disk_extra_worker) ||
-        !wc_updater_worker_init(&st->updater_worker) ||
-        !wc_cookie_job_init(&st->cookie_job) || !wc_list_job_init(&st->startup_job) ||
-        !wc_list_job_init(&st->app_job) || !wc_deep_worker_init(&st->deep_worker) ||
+        !wc_disk_extra_init(&st->disk_extra_worker) || !wc_list_job_init(&st->app_job) ||
         !wc_leftover_worker_init(&st->leftover_worker)) {
         wc_leftover_worker_destroy(&st->leftover_worker);
-        wc_deep_worker_destroy(&st->deep_worker);
         wc_list_job_destroy(&st->app_job);
-        wc_list_job_destroy(&st->startup_job);
-        wc_cookie_job_destroy(&st->cookie_job);
-        wc_updater_worker_destroy(&st->updater_worker);
         wc_disk_extra_destroy(&st->disk_extra_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
-        free(st->startup_items);
         free(st->app_items);
-        free(st->deep_snap);
         free(st->leftover_snap);
         free(st->dup_snap);
         free(st->stale_snap);
@@ -377,17 +316,11 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     const wada_store_ops *ops = wada_ui_store_ops(app, "cleaner", err);
     if (!ops) {
         wc_leftover_worker_destroy(&st->leftover_worker);
-        wc_deep_worker_destroy(&st->deep_worker);
         wc_list_job_destroy(&st->app_job);
-        wc_list_job_destroy(&st->startup_job);
-        wc_cookie_job_destroy(&st->cookie_job);
-        wc_updater_worker_destroy(&st->updater_worker);
         wc_disk_extra_destroy(&st->disk_extra_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
-        free(st->startup_items);
         free(st->app_items);
-        free(st->deep_snap);
         free(st->leftover_snap);
         free(st->dup_snap);
         free(st->stale_snap);
@@ -398,23 +331,15 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     char db_path[640];
     wada_ui_db_path(data_dir, db_path, sizeof db_path);
     if (wc_history_open(&st->history, ops, db_path, err) != WADA_OK ||
-        wc_exclusions_open(&st->exclusions, ops, db_path, err) != WADA_OK ||
-        wc_cookies_open(&st->cookies, ops, db_path, err) != WADA_OK) {
-        wc_cookies_close(&st->cookies);
+        wc_exclusions_open(&st->exclusions, ops, db_path, err) != WADA_OK) {
         wc_exclusions_close(&st->exclusions);
         wc_history_close(&st->history);
         wc_leftover_worker_destroy(&st->leftover_worker);
-        wc_deep_worker_destroy(&st->deep_worker);
         wc_list_job_destroy(&st->app_job);
-        wc_list_job_destroy(&st->startup_job);
-        wc_cookie_job_destroy(&st->cookie_job);
-        wc_updater_worker_destroy(&st->updater_worker);
         wc_disk_extra_destroy(&st->disk_extra_worker);
         wc_disk_worker_destroy(&st->disk_worker);
         wc_worker_destroy(&st->worker);
-        free(st->startup_items);
         free(st->app_items);
-        free(st->deep_snap);
         free(st->leftover_snap);
         free(st->dup_snap);
         free(st->stale_snap);
@@ -423,7 +348,6 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
     }
     reload_history(st);
     wc_exclusions_reload(st);
-    wc_cookies_reload(st);
 
     if (data_dir && data_dir[0]) {
         char vault_dir[WC_PATH_CAP];
@@ -436,25 +360,19 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
                                            &purged, &qerr);
             wc_quarantine_reload(st);
             wc_worker_set_quarantine(&st->worker, &st->quarantine);
-            wc_deep_worker_set_quarantine(&st->deep_worker, &st->quarantine);
             wc_leftover_worker_set_quarantine(&st->leftover_worker, &st->quarantine);
             wc_disk_extra_set_quarantine(&st->disk_extra_worker, &st->quarantine);
         }
     }
 
-    wada_app_command(app, scope, "cleaner.view_health", "Open PC Health Check", "Ctrl 1", cmd_view_health, st);
-    wada_app_command(app, scope, "cleaner.view_cleaner", "Open Junk Cleaner", "Ctrl 2", cmd_view_cleaner, st);
-    wada_app_command(app, scope, "cleaner.view_deep", "Open Deep Clean", "Ctrl 9", cmd_view_deep, st);
-    wada_app_command(app, scope, "cleaner.view_disk", "Open Disk Space Analyzer", "Ctrl 3", cmd_view_disk, st);
-    wada_app_command(app, scope, "cleaner.view_startup", "Open Startup Manager", "Ctrl 4", cmd_view_startup, st);
-    wada_app_command(app, scope, "cleaner.view_apps", "Open Installed Apps", "Ctrl 5", cmd_view_apps, st);
-    wada_app_command(app, scope, "cleaner.view_updater", "Open Software Updater", "Ctrl 6", cmd_view_updater, st);
-    wada_app_command(app, scope, "cleaner.view_exclusions", "Open Exclusions", "Ctrl 7", cmd_view_exclusions, st);
-    wada_app_command(app, scope, "cleaner.view_automation", "Open Automation & Tray", "Ctrl 8", cmd_view_automation, st);
-    wada_app_command(app, scope, "cleaner.analyze", "Analyze all junk targets", "Ctrl R", cmd_analyze, st);
-    wada_app_command(app, scope, "cleaner.preview_files", "Preview sampled files", "Ctrl P", cmd_preview_files, st);
-    wada_app_command(app, scope, "cleaner.view_history", "View latest clean run", "Ctrl H", cmd_view_history, st);
-    wada_app_command(app, scope, "app.about", "About & shortcuts", "Ctrl /", cmd_about, st);
+    wada_app_command(app, scope, "cleaner.view_health", "Open PC Health Check", NULL, cmd_view_health, st);
+    wada_app_command(app, scope, "cleaner.view_cleaner", "Open Junk Cleaner", NULL, cmd_view_cleaner, st);
+    wada_app_command(app, scope, "cleaner.view_apps", "Open Installed Apps", NULL, cmd_view_apps, st);
+    wada_app_command(app, scope, "cleaner.view_disk", "Open Disk Space Analyzer", NULL, cmd_view_disk, st);
+    wada_app_command(app, scope, "cleaner.analyze", "Analyze all junk targets", NULL, cmd_analyze, st);
+    wada_app_command(app, scope, "cleaner.preview_files", "Preview sampled files", NULL, cmd_preview_files, st);
+    wada_app_command(app, scope, "cleaner.view_history", "View latest clean run", NULL, cmd_view_history, st);
+    wada_app_command(app, scope, "app.about", "About", NULL, cmd_about, st);
     wada_app_command(app, scope, "cleaner.select_all", "Select all cleaner targets", NULL, cmd_select_all, st);
     wada_app_command(app, scope, "cleaner.select_none", "Deselect all cleaner targets", NULL, cmd_select_none, st);
     return st;
@@ -463,23 +381,15 @@ static void *wc_cleaner_enter(wada_app *app, wada_scope *scope, const char *data
 static void wc_cleaner_leave(void *state) {
     wc_cleaner_state *st = (wc_cleaner_state *)state;
     if (!st) return;
-    wc_plat_tray_hide();
     wc_leftover_worker_destroy(&st->leftover_worker);
-    wc_deep_worker_destroy(&st->deep_worker);
     wc_list_job_destroy(&st->app_job);
-    wc_list_job_destroy(&st->startup_job);
-    wc_cookie_job_destroy(&st->cookie_job);
-    wc_updater_worker_destroy(&st->updater_worker);
     wc_disk_extra_destroy(&st->disk_extra_worker);
     wc_disk_worker_destroy(&st->disk_worker);
     wc_worker_destroy(&st->worker);
-    wc_cookies_close(&st->cookies);
     wc_exclusions_close(&st->exclusions);
     wc_quarantine_close(&st->quarantine);
     wc_history_close(&st->history);
-    free(st->startup_items);
     free(st->app_items);
-    free(st->deep_snap);
     free(st->leftover_snap);
     free(st->dup_snap);
     free(st->stale_snap);
@@ -509,13 +419,6 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
                                                            &st->sys_drive_total);
                 wada_app_set_status(
                     app, wada_tr(st->snap.dry_run ? "Dry-run preview complete" : "Clean complete"));
-                if (st->tray_enabled && !st->snap.dry_run) {
-                    char sz[32], msg[128];
-                    wc_format_bytes(st->snap.total_bytes_cleaned, sz, sizeof sz);
-                    wada_trf(msg, sizeof msg, "Cleaned %s across %llu files.", sz,
-                             (unsigned long long)st->snap.total_files_cleaned);
-                    wc_plat_tray_notify(wada_tr("Wada Clean"), msg);
-                }
             }
         } else if (st->snap.state == WC_JOB_CANCELLED) {
             wada_app_set_status(app, wada_tr("Job cancelled"));
@@ -541,46 +444,7 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
         st->disk_running = true;
     }
 
-    /* Poll winget updater worker */
-    bool upd_now = wc_updater_worker_poll(&st->updater_worker, &st->updater_snap);
-    if (st->updater_running && !upd_now) {
-        st->updater_running = false;
-        if (st->updater_snap.state == WC_JOB_DONE) {
-            wada_app_set_status(app,
-                                wada_tr(st->updater_snap.op == WC_UPD_CHECK
-                                            ? "Updates check complete"
-                                            : "Package update complete"));
-        } else if (st->updater_snap.state == WC_JOB_CANCELLED) {
-            wada_app_set_status(app, wada_tr("Updates cancelled"));
-        } else if (st->updater_snap.state == WC_JOB_ERROR && st->updater_snap.error_msg[0]) {
-            wada_app_set_status(app, st->updater_snap.error_msg);
-        }
-    } else if (upd_now) {
-        st->updater_running = true;
-    }
-
-    /* Poll browser cookie cleanup job */
-    bool cookie_now = wc_cookie_job_poll(&st->cookie_job, &st->cookie_snap);
-    if (st->cookie_job_running && !cookie_now) {
-        st->cookie_job_running = false;
-        if (st->cookie_snap.state == WC_JOB_DONE) {
-            wada_app_set_status(
-                app, wada_tr(st->cookie_snap.dry_run ? "Cookie preview complete"
-                                                     : "Cookie cleanup complete"));
-        } else if (st->cookie_snap.state == WC_JOB_CANCELLED) {
-            wada_app_set_status(app, wada_tr("Cookie cleanup cancelled"));
-        }
-        wada_ui_confirm_reset(&st->cookie_confirm);
-    } else if (cookie_now) {
-        st->cookie_job_running = true;
-    }
-
     int listed = 0;
-    if (st->startup_loading && wc_list_job_poll(&st->startup_job, &listed)) {
-        st->startup_loading = false;
-        st->startup_loaded = true;
-        st->startup_count = listed;
-    }
     if (st->apps_loading && wc_list_job_poll(&st->app_job, &listed)) {
         st->apps_loading = false;
         st->apps_loaded = true;
@@ -588,28 +452,6 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
         st->apps_version++;
         st->app_selected = listed > 0 ? 0 : -1;
         wada_ui_confirm_reset(&st->app_confirm);
-    }
-
-    /* Poll deep clean worker */
-    bool deep_now = st->deep_snap ? wc_deep_worker_poll(&st->deep_worker, st->deep_snap) : false;
-    if (st->deep_running && !deep_now) {
-        st->deep_running = false;
-        if (st->deep_snap->state == WC_JOB_DONE) {
-            wc_quarantine_reload(st);
-            st->sys_drive_ok = wc_plat_disk_free_space(WC_SYS_DRIVE, &st->sys_drive_free,
-                                                       &st->sys_drive_total);
-            if (st->deep_snap->output_summary[0]) {
-                wada_app_set_status(app, st->deep_snap->output_summary);
-            } else {
-                wada_app_set_status(app, wada_tr("Deep maintenance complete"));
-            }
-        } else if (st->deep_snap->state == WC_JOB_CANCELLED) {
-            wada_app_set_status(app, wada_tr("Deep task cancelled"));
-        } else if (st->deep_snap->state == WC_JOB_ERROR && st->deep_snap->error_msg[0]) {
-            wada_app_set_status(app, st->deep_snap->error_msg);
-        }
-    } else if (deep_now) {
-        st->deep_running = true;
     }
 
     bool leftover_now =
@@ -652,15 +494,12 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
         st->disk_extra_running = true;
     }
 
-    if (st->running || st->disk_running || st->disk_extra_running || st->updater_running ||
-        st->deep_running || st->leftover_running || cookie_now || st->startup_loading ||
+    if (st->running || st->disk_running || st->disk_extra_running || st->leftover_running ||
         st->apps_loading) {
         cui_request_wakeup(ui, 0.05f);
     }
 
     wada_ui_confirm_tick(&st->confirm, ui, 0);
-    wada_ui_confirm_tick(&st->cookie_confirm, ui, 0);
-    wada_ui_confirm_tick(&st->deep_confirm, ui, 0);
 
     cui_row(ui, .width = CUI_FILL, .height = CUI_FILL) {
         /* Left navigation sidebar */
@@ -669,7 +508,6 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
             cui_text(ui, wada_tr("Wada Clean"), .font = CUI_FONT_DISPLAY, .size = 18);
             cui_text(ui, wada_tr("System Utility"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
 
-            cui_nav_section(ui, wada_tr("Cleanup"));
             if (cui_nav_item(ui, wada_tr("Health Check"), .icon = CUI_ICON_SHIELD,
                              .selected = st->active_view == WC_VIEW_HEALTH,
                              .group = "wc-nav")) {
@@ -680,10 +518,10 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
                              .group = "wc-nav")) {
                 st->active_view = WC_VIEW_CLEANER;
             }
-            if (cui_nav_item(ui, wada_tr("Deep Clean"), .icon = CUI_ICON_LAYERS,
-                             .selected = st->active_view == WC_VIEW_DEEP,
+            if (cui_nav_item(ui, wada_tr("Apps"), .icon = CUI_ICON_PACKAGE,
+                             .selected = st->active_view == WC_VIEW_APPS,
                              .group = "wc-nav")) {
-                st->active_view = WC_VIEW_DEEP;
+                st->active_view = WC_VIEW_APPS;
             }
             if (cui_nav_item(ui, wada_tr("Disk Analyzer"), .icon = CUI_ICON_FOLDER_OPEN,
                              .selected = st->active_view == WC_VIEW_DISK,
@@ -691,38 +529,9 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
                 st->active_view = WC_VIEW_DISK;
             }
 
-            cui_nav_section(ui, wada_tr("Manage"));
-            if (cui_nav_item(ui, wada_tr("Startup"), .icon = CUI_ICON_ROCKET,
-                             .selected = st->active_view == WC_VIEW_STARTUP,
-                             .group = "wc-nav")) {
-                st->active_view = WC_VIEW_STARTUP;
-            }
-            if (cui_nav_item(ui, wada_tr("Apps"), .icon = CUI_ICON_PACKAGE,
-                             .selected = st->active_view == WC_VIEW_APPS,
-                             .group = "wc-nav")) {
-                st->active_view = WC_VIEW_APPS;
-            }
-            if (cui_nav_item(ui, wada_tr("Updater"), .icon = CUI_ICON_DOWNLOAD,
-                             .selected = st->active_view == WC_VIEW_UPDATER,
-                             .group = "wc-nav")) {
-                st->active_view = WC_VIEW_UPDATER;
-            }
-
-            cui_nav_section(ui, wada_tr("Settings"));
-            if (cui_nav_item(ui, wada_tr("Exclusions"), .icon = CUI_ICON_LOCK,
-                             .selected = st->active_view == WC_VIEW_EXCLUSIONS,
-                             .group = "wc-nav")) {
-                st->active_view = WC_VIEW_EXCLUSIONS;
-            }
-            if (cui_nav_item(ui, wada_tr("Automation"), .icon = CUI_ICON_CLOCK,
-                             .selected = st->active_view == WC_VIEW_AUTOMATION,
-                             .group = "wc-nav")) {
-                st->active_view = WC_VIEW_AUTOMATION;
-            }
-
             cui_box(ui, .height = CUI_FILL) {}
 
-            if (cui_button(ui, wada_tr("About & shortcuts"), .variant = CUI_BUTTON_GHOST,
+            if (cui_button(ui, wada_tr("About"), .variant = CUI_BUTTON_GHOST,
                            .size = CUI_SIZE_SM, .icon = CUI_ICON_INFO, .full_width = true)) {
                 st->about_open = true;
             }
@@ -734,8 +543,6 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
             }
             cui_badge(ui, wada_tr(st->is_admin ? "Administrator" : "Standard User"),
                       .tone = st->is_admin ? CUI_TONE_SUCCESS : CUI_TONE_NEUTRAL);
-            cui_text(ui, wada_tr("Ctrl K  Commands"), .size = 12,
-                     .color = CUI_COLOR_TEXT_MUTED);
         }
 
         cui_separator(ui);
@@ -749,34 +556,19 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
             case WC_VIEW_CLEANER:
                 wc_view_cleaner_draw(st, app);
                 break;
-            case WC_VIEW_STARTUP:
-                wc_view_startup_draw(st, app);
-                break;
             case WC_VIEW_APPS:
                 wc_view_apps_draw(st, app);
                 break;
             case WC_VIEW_DISK:
                 wc_view_disk_draw(st, app);
                 break;
-            case WC_VIEW_UPDATER:
-                wc_view_updater_draw(st, app);
-                break;
-            case WC_VIEW_EXCLUSIONS:
-                wc_view_exclusions_draw(st, app);
-                break;
-            case WC_VIEW_AUTOMATION:
-                wc_view_schedule_draw(st, app);
-                break;
-            case WC_VIEW_DEEP:
-                wc_view_deep_draw(st, app);
-                break;
             }
         }
     }
 
     if (st->about_open) {
-        cui_dialog(ui, wada_tr("About & shortcuts"), &st->about_open, .width = 560,
-                   .description = wada_tr("Keyboard shortcuts and app information.")) {
+        cui_dialog(ui, wada_tr("About"), &st->about_open, .width = 480,
+                   .description = wada_tr("App information.")) {
             cui_text(ui, "Wada Clean " WC_APP_VERSION, .font = CUI_FONT_DISPLAY, .size = 20);
             cui_text(ui, wada_tr("Native Windows cleaner built with wada-c. MIT licensed."),
                      .size = 12, .color = CUI_COLOR_TEXT_MUTED);
@@ -784,15 +576,6 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
                 cui_text(ui, st->data_dir, .font = CUI_FONT_MONO, .size = 12,
                          .color = CUI_COLOR_TEXT_MUTED, .nowrap = true);
             }
-            cui_separator(ui);
-            cui_text(ui, wada_tr("Keyboard shortcuts"), .font = CUI_FONT_MEDIUM, .size = 14);
-            draw_shortcut_row(ui, wada_tr("Command palette"), "Ctrl K");
-            draw_shortcut_row(ui, wada_tr("Switch section"), "Ctrl 1-9");
-            draw_shortcut_row(ui, wada_tr("Analyze junk"), "Ctrl R");
-            draw_shortcut_row(ui, wada_tr("Preview files"), "Ctrl P");
-            draw_shortcut_row(ui, wada_tr("Latest clean run"), "Ctrl H");
-            draw_shortcut_row(ui, wada_tr("About & shortcuts"), "Ctrl /");
-            draw_shortcut_row(ui, wada_tr("Toggle theme"), "Ctrl T");
             cui_dialog_footer(ui) {
                 if (cui_button(ui, wada_tr("Open data folder"),
                                .variant = CUI_BUTTON_OUTLINE)) {

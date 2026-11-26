@@ -85,19 +85,16 @@ else()
     message(FATAL_ERROR "Supported platforms are WIN32 and APPLE")
 endif()
 
-# Shipped GUI application.
+# Shipped GUI application. Step 1 of the One Door plan keeps only the surfaces
+# that deliver disk space: health, cleaner, apps, disk. Startup, deep clean,
+# updates, automation, exclusions and the cookie allowlist are gone.
 add_executable(wada_clean
     src/main.c
     src/ui/wc_product.c
     src/ui/wc_view_health.c
     src/ui/wc_view_cleaner.c
-    src/ui/wc_view_startup.c
     src/ui/wc_view_apps.c
     src/ui/wc_view_disk.c
-    src/ui/wc_view_updater.c
-    src/ui/wc_view_exclusions.c
-    src/ui/wc_view_schedule.c
-    src/ui/wc_view_deep.c
 )
 target_include_directories(wada_clean PRIVATE src/engine src/platform src/ui)
 target_link_libraries(wada_clean PRIVATE wc_engine wc_platform wada_shell)

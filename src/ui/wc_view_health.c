@@ -9,14 +9,7 @@
 #include "wc_safety.h"
 
 void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
-    if (!st->startup_loaded && !st->startup_loading) wc_startup_refresh(st);
-
     cui_ctx *ui = wada_app_ui(app);
-
-    int enabled_startup = 0;
-    for (int i = 0; i < st->startup_count; i++) {
-        if (st->startup_items[i].enabled) enabled_startup++;
-    }
 
     float drive_used_frac = 0.0f;
     char drive_value[48];
@@ -45,14 +38,6 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
         snprintf(junk_desc, sizeof junk_desc, "%s", wada_tr("Run checkup to analyze"));
     }
 
-    char startup_value[64];
-    if (st->startup_loading) {
-        snprintf(startup_value, sizeof startup_value, "%s", wada_tr("Loading…"));
-    } else {
-        wada_trf(startup_value, sizeof startup_value, "%d enabled / %d total", enabled_startup,
-                 st->startup_count);
-    }
-
     char last_value[48];
     char last_desc[64];
     const wc_history_entry *last = wc_last_clean_run(st);
@@ -67,11 +52,11 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
     }
 
     bool attention = (st->has_analyzed && st->snap.total_bytes_found > 0) ||
-                     (drive_used_frac > 0.85f) || enabled_startup > 8;
+                     (drive_used_frac > 0.85f);
 
     const char *hero_badge = "Not checked yet";
     cui_tone hero_tone = CUI_TONE_NEUTRAL;
-    const char *hero_msg = "Click Run Health Check to scan junk targets and startup impact.";
+    const char *hero_msg = "Click Run Health Check to scan junk targets.";
     if (st->running) {
         hero_badge = "Analyzing System…";
         hero_tone = CUI_TONE_INFO;
@@ -94,7 +79,7 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
         cui_column(ui, .gap = 2) {
             cui_text(ui, wada_tr("PC Health Check"), .font = CUI_FONT_DISPLAY, .size = 24);
             cui_text(ui,
-                     wada_tr("One-click overview of disk space, reclaimable junk, startup impact, and clean history."),
+                     wada_tr("One-click overview of disk space, reclaimable junk, and clean history."),
                      .size = 12, .color = CUI_COLOR_TEXT_MUTED);
         }
 
@@ -165,11 +150,6 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
 
         cui_row(ui, .width = CUI_FILL, .gap = 12) {
             cui_card(ui, .width = CUI_GROW(1.0f), .pad = 14, .gap = 6) {
-                cui_text(ui, wada_tr("Startup Programs"), .size = 12,
-                         .color = CUI_COLOR_TEXT_MUTED);
-                cui_text(ui, startup_value, .font = CUI_FONT_DISPLAY, .size = 24, .tabular = true);
-            }
-            cui_card(ui, .width = CUI_GROW(1.0f), .pad = 14, .gap = 6) {
                 cui_text(ui, wada_tr("Last Clean"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
                 cui_text(ui, last_value, .font = CUI_FONT_DISPLAY, .size = 24, .tabular = true);
                 cui_text(ui, last_desc, .size = 12, .color = CUI_COLOR_TEXT_MUTED);
@@ -188,23 +168,14 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
                          sz);
                 cui_alert(ui, msg, .tone = CUI_TONE_INFO, .icon = CUI_ICON_SPARKLES);
             }
-            if (enabled_startup > 8) {
-                char msg[160];
-                wada_trf(msg, sizeof msg,
-                         "%d startup items are enabled. Disabling unused ones can speed up boot times.",
-                         enabled_startup);
-                cui_alert(ui, msg, .tone = CUI_TONE_WARNING, .icon = CUI_ICON_ROCKET);
-            }
             if (!st->is_admin) {
                 cui_alert(ui,
                           wada_tr("Running as Standard User. Restart as Administrator to scan protected system folders."),
                           .tone = CUI_TONE_NEUTRAL, .icon = CUI_ICON_SHIELD);
             }
-            if ((!st->has_analyzed || st->snap.total_bytes_found == 0) && enabled_startup <= 8 &&
-                st->is_admin) {
-                cui_text(ui,
-                         wada_tr("Everything looks good! Check back periodically or configure Exclusions to protect paths."),
-                         .size = 12, .color = CUI_COLOR_TEXT_MUTED);
+            if ((!st->has_analyzed || st->snap.total_bytes_found == 0) && st->is_admin) {
+                cui_text(ui, wada_tr("Everything looks good! Check back periodically."), .size = 12,
+                         .color = CUI_COLOR_TEXT_MUTED);
             }
 
             cui_row(ui, .width = CUI_FILL, .gap = 8) {
@@ -212,13 +183,9 @@ void wc_view_health_draw(wc_cleaner_state *st, wada_app *app) {
                                .size = CUI_SIZE_SM)) {
                     st->active_view = WC_VIEW_CLEANER;
                 }
-                if (cui_button(ui, wada_tr("Manage Startup Items"), .variant = CUI_BUTTON_OUTLINE,
+                if (cui_button(ui, wada_tr("Open Disk Analyzer"), .variant = CUI_BUTTON_OUTLINE,
                                .size = CUI_SIZE_SM)) {
-                    st->active_view = WC_VIEW_STARTUP;
-                }
-                if (cui_button(ui, wada_tr("Manage Exclusions"), .variant = CUI_BUTTON_OUTLINE,
-                               .size = CUI_SIZE_SM)) {
-                    st->active_view = WC_VIEW_EXCLUSIONS;
+                    st->active_view = WC_VIEW_DISK;
                 }
             }
         }

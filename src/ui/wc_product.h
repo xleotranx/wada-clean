@@ -6,9 +6,6 @@
 
 #include "wada_product.h"
 #include "wada_ui.h"
-#include "wc_cookies.h"
-#include "wc_cookie_job.h"
-#include "wc_deep.h"
 #include "wc_disk.h"
 #include "wc_exclusions.h"
 #include "wc_history.h"
@@ -16,7 +13,6 @@
 #include "wc_list_job.h"
 #include "wc_quarantine.h"
 #include "wc_types.h"
-#include "wc_updater.h"
 #include "wc_worker.h"
 
 #define WC_HISTORY_UI_CAP 16
@@ -28,16 +24,14 @@
     cui_column((ui), .id = (list_id), .width = CUI_FILL, .height = CUI_FILL,            \
                .scroll_y = true, .gap = (item_gap), .pad_bottom = WC_SCROLL_PAD_BOTTOM)
 
+/* Step 1 of the One Door plan: the product promises disk space, so only the
+ * surfaces that deliver it remain. Startup, deep maintenance, updates,
+ * automation, exclusions and the cookie allowlist are gone. */
 typedef enum wc_view_id {
     WC_VIEW_HEALTH = 0,
     WC_VIEW_CLEANER = 1,
-    WC_VIEW_STARTUP = 2,
-    WC_VIEW_APPS = 3,
-    WC_VIEW_DISK = 4,
-    WC_VIEW_UPDATER = 5,
-    WC_VIEW_EXCLUSIONS = 6,
-    WC_VIEW_AUTOMATION = 7,
-    WC_VIEW_DEEP = 8
+    WC_VIEW_APPS = 2,
+    WC_VIEW_DISK = 3
 } wc_view_id;
 
 #define WC_APP_VERSION "0.1.0"
@@ -81,32 +75,11 @@ typedef struct wc_cleaner_state {
 
     wada_ui_confirm confirm;
 
-    /* Exclusions & Cookie Allowlist */
-    int excl_tab;
+    /* Exclusions are no longer editable in the UI, but rules already persisted
+     * must keep being honoured by the worker until the engine is removed. */
     wc_exclusions exclusions;
     wc_exclusion_item exclusion_items[WC_MAX_EXCLUSIONS];
     int exclusion_count;
-    char exclusion_draft[WC_PATH_CAP];
-    char exclusion_error[160];
-
-    wc_cookies cookies;
-    wc_cookie_allow_item cookie_items[WC_MAX_COOKIE_ALLOW];
-    int cookie_count;
-    char cookie_draft[192];
-    char cookie_error[160];
-    bool cookie_dry_run;
-    wc_cookie_job cookie_job;
-    wc_cookie_snapshot cookie_snap;
-    bool cookie_job_running;
-    wada_ui_confirm cookie_confirm;
-
-    /* Startup Manager view */
-    wc_startup_item *startup_items;
-    int startup_count;
-    bool startup_loaded;
-    bool startup_loading;
-    wc_list_job startup_job;
-    char startup_search[64];
 
     /* Installed Apps view */
     wc_app_item *app_items;
@@ -140,29 +113,6 @@ typedef struct wc_cleaner_state {
     char disk_root[WC_PATH_CAP];
     int disk_tab;
 
-    /* Software Updater view */
-    wc_updater_worker updater_worker;
-    wc_updater_snapshot updater_snap;
-    bool updater_running;
-
-    /* Automation & System Tray view */
-    wc_schedule_info sched_info;
-    bool sched_loaded;
-    int sched_freq_idx;
-    double sched_hour;
-    bool tray_enabled;
-
-    /* Deep Clean view */
-    wc_deep_worker deep_worker;
-    wc_deep_snapshot *deep_snap;
-    bool deep_running;
-    int deep_tab;
-    bool deep_dry_run;
-    bool deep_reset_base;
-    bool deep_restore_point;
-    bool deep_drivers_unused_only;
-    wada_ui_confirm deep_confirm;
-
     char data_dir[WC_PATH_CAP];
     char status[128];
 } wc_cleaner_state;
@@ -182,21 +132,14 @@ void wc_cleaner_select_all(wc_cleaner_state *st, bool select);
 void wc_cleaner_select_category(wc_cleaner_state *st, wc_category cat, bool select);
 
 void wc_exclusions_reload(wc_cleaner_state *st);
-void wc_cookies_reload(wc_cleaner_state *st);
 void wc_quarantine_reload(wc_cleaner_state *st);
-void wc_startup_refresh(wc_cleaner_state *st);
 void wc_apps_refresh(wc_cleaner_state *st);
 void wc_disk_start_scan(wc_cleaner_state *st);
 
 void wc_view_health_draw(wc_cleaner_state *st, wada_app *app);
 void wc_view_cleaner_draw(wc_cleaner_state *st, wada_app *app);
-void wc_view_startup_draw(wc_cleaner_state *st, wada_app *app);
 void wc_view_apps_draw(wc_cleaner_state *st, wada_app *app);
 void wc_view_disk_draw(wc_cleaner_state *st, wada_app *app);
-void wc_view_updater_draw(wc_cleaner_state *st, wada_app *app);
-void wc_view_exclusions_draw(wc_cleaner_state *st, wada_app *app);
-void wc_view_schedule_draw(wc_cleaner_state *st, wada_app *app);
-void wc_view_deep_draw(wc_cleaner_state *st, wada_app *app);
 
 extern const wada_product wc_cleaner_product;
 
