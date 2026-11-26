@@ -166,11 +166,6 @@ void wc_view_apps_draw(wc_cleaner_state *st, wada_app *app) {
                                                   .selected = (idx == st->app_selected))) {
                                     st->app_selected = idx;
                                     wada_ui_confirm_reset(&st->app_confirm);
-                                    if (!st->leftover_running && st->leftover_snap) {
-                                        st->leftover_snap->state = WC_JOB_IDLE;
-                                        st->leftover_snap->count = 0;
-                                        st->leftover_snap->output_summary[0] = '\0';
-                                    }
                                 }
                             }
                         }
@@ -218,72 +213,6 @@ void wc_view_apps_draw(wc_cleaner_state *st, wada_app *app) {
                     cui_text(ui, wada_tr("Estimated Size"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
                     cui_text(ui, size_str, .size = 13, .tabular = true);
 
-                    cui_separator(ui);
-
-                    /* Leftover scanner section */
-                    cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER,
-                            .justify = CUI_JUSTIFY_BETWEEN, .gap = 6) {
-                        cui_text(ui, wada_tr("Residual Leftovers"), .font = CUI_FONT_MEDIUM,
-                                 .size = 13);
-                        if (cui_button(ui, wada_tr("Scan Leftovers"),
-                                       .variant = CUI_BUTTON_OUTLINE, .size = CUI_SIZE_SM,
-                                       .icon = CUI_ICON_SEARCH, .disabled = st->leftover_running)) {
-                            wc_leftover_worker_start_scan(&st->leftover_worker, sel);
-                            wada_app_set_status(app, wada_tr("Scanning for leftover files…"));
-                        }
-                    }
-
-                    bool match_app = st->leftover_snap &&
-                                     strcmp(st->leftover_snap->app_name, sel->name) == 0;
-                    if (st->leftover_running) {
-                        cui_progress(ui, 0.0f, .indeterminate = true, .width = CUI_FILL,
-                                     .label = wada_tr("Scanning AppData & ProgramData…"),
-                                     .tone = CUI_TONE_ACCENT);
-                    } else if (match_app && st->leftover_snap->state == WC_JOB_DONE) {
-                        if (st->leftover_snap->count == 0) {
-                            cui_text(ui, wada_tr("No leftovers found."), .size = 12,
-                                     .color = CUI_COLOR_TEXT_MUTED);
-                        } else {
-                            const char *qpaths[WC_MAX_LEFTOVERS];
-                            int qcnt = 0;
-                            wc_scroll_list(ui, "app-leftovers", 4) {
-                                for (int li = 0; li < st->leftover_snap->count; li++) {
-                                    wc_leftover_item *lf = &st->leftover_snap->items[li];
-                                    if (lf->selected) qpaths[qcnt++] = lf->path;
-                                    char lsz[32];
-                                    wc_format_bytes(lf->bytes, lsz, sizeof lsz);
-                                    cui_id_scope(ui, lf->path) {
-                                        cui_card(ui, .width = CUI_FILL, .pad = 6, .gap = 2,
-                                                 .muted = true) {
-                                            cui_row(ui, .width = CUI_FILL,
-                                                    .align = CUI_ALIGN_CENTER,
-                                                    .justify = CUI_JUSTIFY_BETWEEN, .gap = 4) {
-                                                cui_checkbox(ui,
-                                                             wada_tr(lf->confidence >= 2 ? "High"
-                                                                                         : "Medium"),
-                                                             &lf->selected);
-                                                cui_text(ui, lsz, .size = 12,
-                                                         .color = CUI_COLOR_TEXT_SECONDARY,
-                                                         .tabular = true);
-                                            }
-                                            cui_text(ui, lf->path, .font = CUI_FONT_MONO,
-                                                     .size = 12, .color = CUI_COLOR_TEXT_MUTED,
-                                                     .nowrap = true);
-                                        }
-                                    }
-                                }
-                            }
-                            if (cui_button(ui, wada_tr("Move to Quarantine"),
-                                           .variant = CUI_BUTTON_OUTLINE, .size = CUI_SIZE_SM,
-                                           .icon = CUI_ICON_ARCHIVE, .width = CUI_FILL,
-                                           .disabled = qcnt == 0 || !st->quarantine.open)) {
-                                wc_leftover_worker_start_quarantine(&st->leftover_worker, qpaths,
-                                                                    qcnt);
-                            }
-                        }
-                    } else {
-                        cui_box(ui, .height = CUI_FILL) {}
-                    }
 
                     if (confirming) {
                         cui_text(ui, wada_tr("Click Confirm Uninstall to launch the uninstaller."),

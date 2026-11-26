@@ -6,8 +6,6 @@
 #include "wc_platform.h"
 #include "wc_safety.h"
 
-#ifdef _WIN32
-
 static const wc_target_def g_rules[] = {
     {
         "win.user_temp",
@@ -20,7 +18,6 @@ static const wc_target_def g_rules[] = {
         true,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "win.recycle_bin",
@@ -33,7 +30,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "win.thumb_cache",
@@ -46,7 +42,6 @@ static const wc_target_def g_rules[] = {
         true,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "win.crash_dumps",
@@ -59,7 +54,6 @@ static const wc_target_def g_rules[] = {
         true,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "win.d3d_cache",
@@ -72,7 +66,6 @@ static const wc_target_def g_rules[] = {
         true,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "win.nvidia_cache",
@@ -85,7 +78,6 @@ static const wc_target_def g_rules[] = {
         true,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "win.amd_cache",
@@ -98,7 +90,6 @@ static const wc_target_def g_rules[] = {
         true,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "win.sys_temp",
@@ -111,7 +102,6 @@ static const wc_target_def g_rules[] = {
         false,
         true,
         WC_RISK_SAFE,
-        false,
     },
     {
         "win.wu_cache",
@@ -124,7 +114,6 @@ static const wc_target_def g_rules[] = {
         false,
         true,
         WC_RISK_SAFE,
-        false,
     },
     {
         "win.wer_reports",
@@ -137,21 +126,8 @@ static const wc_target_def g_rules[] = {
         false,
         true,
         WC_RISK_SAFE,
-        false,
     },
-    {
-        "win.old_downloads",
-        "Old Installers in Downloads (30d+)",
-        WC_CAT_SYSTEM,
-        WC_TARGET_OLD_DOWNLOADS,
-        "USERPROFILE",
-        "Downloads",
-        "",
-        false,
-        false,
-        WC_RISK_MODERATE,
-        true,
-    },
+
     {
         "browser.chrome_cache",
         "Chrome Cache (All Profiles)",
@@ -163,7 +139,6 @@ static const wc_target_def g_rules[] = {
         true,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "browser.edge_cache",
@@ -176,7 +151,6 @@ static const wc_target_def g_rules[] = {
         true,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "browser.brave_cache",
@@ -189,7 +163,6 @@ static const wc_target_def g_rules[] = {
         true,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "browser.firefox_cache",
@@ -202,7 +175,6 @@ static const wc_target_def g_rules[] = {
         true,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "app.vscode_cache",
@@ -215,7 +187,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "app.discord_cache",
@@ -228,7 +199,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "app.slack_cache",
@@ -241,7 +211,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "app.spotify_cache",
@@ -254,7 +223,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_SAFE,
-        false,
     },
     {
         "dev.npm_cache",
@@ -267,7 +235,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_MODERATE,
-        false,
     },
     {
         "dev.pnpm_store",
@@ -280,7 +247,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_MODERATE,
-        false,
     },
     {
         "dev.pip_cache",
@@ -293,7 +259,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_MODERATE,
-        false,
     },
     {
         "dev.uv_cache",
@@ -306,7 +271,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_MODERATE,
-        false,
     },
     {
         "dev.nuget_cache",
@@ -319,7 +283,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_MODERATE,
-        false,
     },
     {
         "dev.cargo_cache",
@@ -332,7 +295,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_MODERATE,
-        false,
     },
     {
         "dev.gradle_cache",
@@ -345,7 +307,6 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_MODERATE,
-        false,
     },
     {
         "dev.go_build_cache",
@@ -358,133 +319,10 @@ static const wc_target_def g_rules[] = {
         false,
         false,
         WC_RISK_MODERATE,
-        false,
     },
 };
 
-#else /* macOS / POSIX */
 
-static const wc_target_def g_rules[] = {
-    {
-        "mac.user_caches",
-        "User Caches",
-        WC_CAT_SYSTEM,
-        WC_TARGET_DIR_CONTENTS,
-        "HOME",
-        "Library/Caches",
-        "",
-        true,
-        false,
-        WC_RISK_SAFE,
-        false,
-    },
-    {
-        "mac.trash",
-        "Trash",
-        WC_CAT_SYSTEM,
-        WC_TARGET_RECYCLE_BIN,
-        "",
-        "",
-        "",
-        true,
-        false,
-        WC_RISK_SAFE,
-        false,
-    },
-    {
-        "mac.user_logs",
-        "User Logs",
-        WC_CAT_SYSTEM,
-        WC_TARGET_DIR_CONTENTS,
-        "HOME",
-        "Library/Logs",
-        "",
-        true,
-        false,
-        WC_RISK_SAFE,
-        false,
-    },
-    {
-        "mac.crash_reports",
-        "Crash Reports",
-        WC_CAT_SYSTEM,
-        WC_TARGET_DIR_CONTENTS,
-        "HOME",
-        "Library/Logs/DiagnosticReports",
-        "",
-        true,
-        false,
-        WC_RISK_SAFE,
-        false,
-    },
-    {
-        "mac.sys_caches",
-        "System Caches",
-        WC_CAT_SYSTEM,
-        WC_TARGET_DIR_CONTENTS,
-        "",
-        "/Library/Caches",
-        "",
-        false,
-        true,
-        WC_RISK_SAFE,
-        false,
-    },
-    {
-        "browser.chrome_cache",
-        "Chrome Cache",
-        WC_CAT_BROWSER,
-        WC_TARGET_DIR_CONTENTS,
-        "HOME",
-        "Library/Caches/Google/Chrome/Default/Cache",
-        "Google Chrome",
-        true,
-        false,
-        WC_RISK_SAFE,
-        false,
-    },
-    {
-        "browser.edge_cache",
-        "Edge Cache",
-        WC_CAT_BROWSER,
-        WC_TARGET_DIR_CONTENTS,
-        "HOME",
-        "Library/Caches/Microsoft Edge/Default/Cache",
-        "Microsoft Edge",
-        true,
-        false,
-        WC_RISK_SAFE,
-        false,
-    },
-    {
-        "browser.safari_cache",
-        "Safari Cache",
-        WC_CAT_BROWSER,
-        WC_TARGET_DIR_CONTENTS,
-        "HOME",
-        "Library/Caches/com.apple.Safari",
-        "Safari",
-        true,
-        false,
-        WC_RISK_SAFE,
-        false,
-    },
-    {
-        "browser.firefox_cache",
-        "Firefox Cache",
-        WC_CAT_BROWSER,
-        WC_TARGET_FIREFOX_PROFILES,
-        "HOME",
-        "Library/Caches/Firefox/Profiles",
-        "firefox",
-        true,
-        false,
-        WC_RISK_SAFE,
-        false,
-    },
-};
-
-#endif
 
 int wc_rules_count(void) {
     return (int)(sizeof g_rules / sizeof g_rules[0]);

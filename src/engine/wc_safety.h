@@ -25,14 +25,6 @@ bool wc_safety_path_within(const char *root, const char *candidate);
  * thumbnail or icon cache database (`thumbcache_*.db` or `iconcache_*.db`). */
 bool wc_safety_is_thumbcache_file(const char *filename);
 
-/* Returns true if `filename` (single path component) has an installer/image
- * extension targeted by Old Downloads cleanup (`.exe`, `.msi`, `.msix`, `.iso`). */
-bool wc_safety_is_old_installer_ext(const char *filename);
-
-/* Returns true if `path` is permissible for quarantine move/restore (normalized
- * non-root path, not inside WinSxS/System32/SysWOW64/DriverStore/Program Files). */
-bool wc_safety_is_quarantine_safe_path(const char *path);
-
 /* Formats byte sizes into human-readable "B", "KB", "MB", or "GB" strings. */
 void wc_format_bytes(uint64_t bytes, char *out, size_t cap);
 

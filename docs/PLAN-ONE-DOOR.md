@@ -352,4 +352,36 @@ The parent `...\MSTeams` directory holds the profile; WebView2 cache subfolders 
 
 ---
 
-*Next: sign-off on step 5 (delete the retired engines, platform backends, tests, i18n sweep, README/PLAN rewrite, version 0.2.0).*
+### Step 5 — done (2026-11-26)
+
+**Shipped**
+- **Deleted the retired engines and backends:** `wc_deep`, `wc_updater`, `wc_cookies`, `wc_cookie_job`, `wc_leftovers`, `wc_quarantine`, `wc_sha256`, `wc_exclusions`; Windows startup/updater/scheduler/deep/cookie backends; the whole `src/platform/macos` tree. `wc_platform.h` and `wc_types.h` now declare only what exists.
+- **Quarantine removed end to end** — engine, worker callback, product state, UI, safety helpers, type fields, and the `wc_target_def.quarantine` column. The _Old installers in Downloads_ rule went with it; rules are 26.
+- **Tests: 8 suites / 662 checks → 3 suites / 307 checks.** Every suite died with its engine; no test was deleted ahead of its subject. `phase1` (safety, rules, worker, history), `phase2` (apps, disk) and `wave1` (safety, browser profile discovery) remain.
+- **i18n table: 474 → 105 pairs.** Pruned mechanically against every string literal in `src/`, with continuation-aware handling for wrapped entries.
+- **Docs rewritten to match the product:** `README.md`, `PLAN.md`, new `CHANGELOG.md`; the v0.1 UX review carries a "superseded" banner instead of dead links passing as current.
+- **Version 0.2.0** in the app and in `package.ps1`.
+
+**Numbers**
+| | v0.1.0 | v0.2.0 |
+|---|---|---|
+| `src/` lines | 15,189 | **4,766** (−69%) |
+| `src/ui` lines | 4,263 | **1,906** |
+| Test suites / checks | 8 / 662 | **3 / 307** |
+| i18n pairs | 474 | **105** |
+| Stripped exe | 4,159,364 B | **3,119,616 B** (−25%) |
+
+The exe fell less than the source because SQLite, the shell and the immediate-mode UI toolkit dominate the binary; the part we control is 69% smaller.
+
+**Two mistakes made and fixed in this step (kept here on purpose)**
+1. `wc_win_dialog.c` looked like tray code, so it was deleted with the automation backend. It was actually the native folder picker; the link failed and it came back as `wc_win_folder.c`. Verify before deleting.
+2. The first i18n prune was self-referential (the table's own lines counted as references), then a second attempt orphaned the translations of multi-line entries. The build caught both; the final script strips the table before scanning and consumes wrapped entries as blocks.
+
+**Known limitations**
+- New screens are English-only; `--lang vi` falls back to English there.
+- The status bar's right side (`dark 0.1.0`) is shell-owned and shows the **wada-c framework** version, not Wada Clean's. About shows 0.2.0. Needs an upstream change.
+- `dist/` still contains v0.1.0 packaging; `package.ps1` regenerates it as v0.2.0.
+
+---
+
+*v0.2.0 is complete. Remaining release work: run `package.ps1 -BuildType Release`, spot-check the ZIP on a clean profile, and commission the Tiếng Việt pass for the new screens.*

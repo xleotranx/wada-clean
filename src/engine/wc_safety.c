@@ -221,42 +221,6 @@ bool wc_safety_is_thumbcache_file(const char *filename) {
     return false;
 }
 
-bool wc_safety_is_old_installer_ext(const char *filename) {
-    if (!filename || !filename[0]) return false;
-    for (const char *p = filename; *p; p++) {
-        if (*p == '/' || *p == '\\') return false;
-    }
-    size_t len = strlen(filename);
-    if (len > 4 && ascii_strcasecmp(filename + len - 4, ".exe") == 0) return true;
-    if (len > 4 && ascii_strcasecmp(filename + len - 4, ".msi") == 0) return true;
-    if (len > 4 && ascii_strcasecmp(filename + len - 4, ".iso") == 0) return true;
-    if (len > 5 && ascii_strcasecmp(filename + len - 5, ".msix") == 0) return true;
-    return false;
-}
-
-bool wc_safety_is_quarantine_safe_path(const char *path) {
-    char norm[WC_PATH_CAP];
-    if (!wc_safety_normalize_path(path, norm, sizeof norm)) return false;
-    if (wc_safety_is_valid_target_root(norm)) return true;
-
-    /* Permit individual orphaned .msi/.msp files under C:\Windows\Installer\<file>
-     * (never the Installer directory itself). */
-    if (isalpha((unsigned char)norm[0]) && norm[1] == ':' && norm[2] == '\\') {
-        const char *rel = norm + 3;
-        if (ascii_strncasecmp(rel, "Windows\\Installer\\", 18) == 0) {
-            const char *leaf = rel + 18;
-            if (leaf[0] && strchr(leaf, '\\') == NULL) {
-                size_t len = strlen(leaf);
-                if (len > 4 && (ascii_strcasecmp(leaf + len - 4, ".msi") == 0 ||
-                                ascii_strcasecmp(leaf + len - 4, ".msp") == 0)) {
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
 void wc_format_bytes(uint64_t bytes, char *out, size_t cap) {
     if (!out || cap == 0) return;
     const uint64_t kb = 1024ULL;

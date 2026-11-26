@@ -19,21 +19,19 @@ set(WADA_BUILD_APPS OFF CACHE BOOL "Build Wada apps and examples" FORCE)
 set(WADA_BUILD_TESTS OFF CACHE BOOL "Build Wada tests" FORCE)
 add_subdirectory("${WADA_C_ABS}" "${CMAKE_BINARY_DIR}/wada-c")
 
+# Wada Clean is a Windows-only disk-space utility: one scan, one clean, big
+# apps, and a read-only space breakdown. The POSIX backend was retired in v0.2.
+if(NOT WIN32)
+    message(FATAL_ERROR "Wada Clean is a Windows application.")
+endif()
+
 # Pure C99 engine (zero OS headers).
 add_library(wc_engine STATIC
     src/engine/wc_safety.c
     src/engine/wc_rules.c
     src/engine/wc_history.c
-    src/engine/wc_quarantine.c
-    src/engine/wc_deep.c
-    src/engine/wc_leftovers.c
-    src/engine/wc_sha256.c
     src/engine/wc_worker.c
     src/engine/wc_disk.c
-    src/engine/wc_exclusions.c
-    src/engine/wc_updater.c
-    src/engine/wc_cookies.c
-    src/engine/wc_cookie_job.c
     src/engine/wc_list_job.c
 )
 target_include_directories(wc_engine PUBLIC src/engine src/platform)
@@ -45,48 +43,21 @@ else()
 endif()
 
 # Platform backend.
-if(WIN32)
-    add_library(wc_platform STATIC
-        src/platform/wc_cookies_sql.c
-        src/platform/win32/wc_win_fs.c
-        src/platform/win32/wc_win_proc.c
-        src/platform/win32/wc_win_startup.c
-        src/platform/win32/wc_win_apps.c
-        src/platform/win32/wc_win_updater.c
-        src/platform/win32/wc_win_sched.c
-        src/platform/win32/wc_win_dialog.c
-        src/platform/win32/wc_win_cookies.c
-        src/platform/win32/wc_win_deep.c
-    )
-    target_include_directories(wc_platform PUBLIC src/platform src/engine "${WADA_C_ABS}/vendor/sqlite")
-    target_link_libraries(wc_platform PUBLIC wc_engine wada_sqlite shell32 advapi32 user32 ole32 uuid)
-    if(MSVC)
-        target_compile_options(wc_platform PRIVATE /W4)
-    else()
-        target_compile_options(wc_platform PRIVATE -Wall -Wextra)
-    endif()
-elseif(APPLE)
-    find_package(Threads REQUIRED)
-    add_library(wc_platform STATIC
-        src/platform/wc_cookies_sql.c
-        src/platform/macos/wc_mac_fs.c
-        src/platform/macos/wc_mac_proc.c
-        src/platform/macos/wc_mac_startup.c
-        src/platform/macos/wc_mac_apps.c
-        src/platform/macos/wc_mac_updater.c
-        src/platform/macos/wc_mac_sched.c
-        src/platform/macos/wc_mac_cookies.c
-        src/platform/macos/wc_mac_deep.c
-    )
-    target_include_directories(wc_platform PUBLIC src/platform src/engine "${WADA_C_ABS}/vendor/sqlite")
-    target_link_libraries(wc_platform PUBLIC wc_engine wada_sqlite Threads::Threads)
-    target_compile_options(wc_platform PRIVATE -Wall -Wextra)
+add_library(wc_platform STATIC
+    src/platform/win32/wc_win_fs.c
+    src/platform/win32/wc_win_proc.c
+    src/platform/win32/wc_win_apps.c
+    src/platform/win32/wc_win_folder.c
+)
+target_include_directories(wc_platform PUBLIC src/platform src/engine "${WADA_C_ABS}/vendor/sqlite")
+target_link_libraries(wc_platform PUBLIC wc_engine wada_sqlite shell32 advapi32 user32 ole32 uuid)
+if(MSVC)
+    target_compile_options(wc_platform PRIVATE /W4)
 else()
-    message(FATAL_ERROR "Supported platforms are WIN32 and APPLE")
+    target_compile_options(wc_platform PRIVATE -Wall -Wextra)
 endif()
 
-# Shipped GUI application. Step 2 of the One Door plan: one home screen that
-# answers "how much can I get back?", and one Tools door for everything else.
+# Shipped GUI application: one home screen and one Tools door.
 add_executable(wada_clean
     src/main.c
     src/ui/wc_product.c
@@ -102,28 +73,23 @@ if(MSVC)
 else()
     target_compile_options(wada_clean PRIVATE -Wall -Wextra)
 endif()
-if(WIN32)
-    set_target_properties(wada_clean PROPERTIES WIN32_EXECUTABLE ON)
-endif()
+set_target_properties(wada_clean PROPERTIES WIN32_EXECUTABLE ON)
 
 # Isolated fixture unit tests.
 enable_testing()
 
-if(WIN32)
-add_executable(wada_clean_tests
-    tests/test_phase1.c
-)
-target_include_directories(wada_clean_tests PRIVATE src/engine src/platform "${WADA_C_ABS}/src/providers/sqlite")
+add_executable(wada_clean_tests tests/test_phase1.c)
+target_include_directories(wada_clean_tests PRIVATE src/engine src/platform
+                           "${WADA_C_ABS}/src/providers/sqlite")
 target_link_libraries(wada_clean_tests PRIVATE wc_engine wc_platform wada_sqlite)
 if(MSVC)
     target_compile_options(wada_clean_tests PRIVATE /W4)
 else()
     target_compile_options(wada_clean_tests PRIVATE -Wall -Wextra)
 endif()
+add_test(NAME phase1 COMMAND wada_clean_tests)
 
-add_executable(wada_phase2_tests
-    tests/test_phase2.c
-)
+add_executable(wada_phase2_tests tests/test_phase2.c)
 target_include_directories(wada_phase2_tests PRIVATE src/engine src/platform)
 target_link_libraries(wada_phase2_tests PRIVATE wc_engine wc_platform wada_core)
 if(MSVC)
@@ -131,38 +97,11 @@ if(MSVC)
 else()
     target_compile_options(wada_phase2_tests PRIVATE -Wall -Wextra)
 endif()
-
-add_executable(wada_phase3_tests
-    tests/test_phase3.c
-)
-target_include_directories(wada_phase3_tests PRIVATE src/engine src/platform "${WADA_C_ABS}/src/providers/sqlite")
-target_link_libraries(wada_phase3_tests PRIVATE wc_engine wc_platform wada_sqlite)
-if(MSVC)
-    target_compile_options(wada_phase3_tests PRIVATE /W4)
-else()
-    target_compile_options(wada_phase3_tests PRIVATE -Wall -Wextra)
-endif()
-
-add_executable(wada_phase4_tests
-    tests/test_phase4.c
-)
-target_include_directories(wada_phase4_tests PRIVATE src/engine src/platform "${WADA_C_ABS}/src/providers/sqlite" "${WADA_C_ABS}/vendor/sqlite")
-target_link_libraries(wada_phase4_tests PRIVATE wc_engine wc_platform wada_sqlite)
-if(MSVC)
-    target_compile_options(wada_phase4_tests PRIVATE /W4)
-else()
-    target_compile_options(wada_phase4_tests PRIVATE -Wall -Wextra)
-endif()
-
-add_test(NAME phase1 COMMAND wada_clean_tests)
 add_test(NAME phase2 COMMAND wada_phase2_tests)
-add_test(NAME phase3 COMMAND wada_phase3_tests)
-add_test(NAME phase4 COMMAND wada_phase4_tests)
 
-add_executable(wada_wave1_tests
-    tests/test_wave1.c
-)
-target_include_directories(wada_wave1_tests PRIVATE src/engine src/platform "${WADA_C_ABS}/src/providers/sqlite")
+add_executable(wada_wave1_tests tests/test_wave1.c)
+target_include_directories(wada_wave1_tests PRIVATE src/engine src/platform
+                           "${WADA_C_ABS}/src/providers/sqlite")
 target_link_libraries(wada_wave1_tests PRIVATE wc_engine wc_platform wada_sqlite)
 if(MSVC)
     target_compile_options(wada_wave1_tests PRIVATE /W4)
@@ -170,40 +109,3 @@ else()
     target_compile_options(wada_wave1_tests PRIVATE -Wall -Wextra)
 endif()
 add_test(NAME wave1 COMMAND wada_wave1_tests)
-
-add_executable(wada_wave3_tests
-    tests/test_wave3.c
-)
-target_include_directories(wada_wave3_tests PRIVATE src/engine src/platform)
-target_link_libraries(wada_wave3_tests PRIVATE wc_engine wc_platform wada_core)
-if(MSVC)
-    target_compile_options(wada_wave3_tests PRIVATE /W4)
-else()
-    target_compile_options(wada_wave3_tests PRIVATE -Wall -Wextra)
-endif()
-add_test(NAME wave3 COMMAND wada_wave3_tests)
-endif()
-
-add_executable(wada_wave2_tests
-    tests/test_wave2.c
-)
-target_include_directories(wada_wave2_tests PRIVATE src/engine src/platform)
-target_link_libraries(wada_wave2_tests PRIVATE wc_engine wc_platform wada_core)
-if(MSVC)
-    target_compile_options(wada_wave2_tests PRIVATE /W4)
-else()
-    target_compile_options(wada_wave2_tests PRIVATE -Wall -Wextra)
-endif()
-add_test(NAME wave2 COMMAND wada_wave2_tests)
-
-add_executable(wada_phase5_tests
-    tests/test_phase5.c
-)
-target_include_directories(wada_phase5_tests PRIVATE src/engine src/platform)
-target_link_libraries(wada_phase5_tests PRIVATE wc_engine wc_platform wada_core)
-if(MSVC)
-    target_compile_options(wada_phase5_tests PRIVATE /W4)
-else()
-    target_compile_options(wada_phase5_tests PRIVATE -Wall -Wextra)
-endif()
-add_test(NAME phase5 COMMAND wada_phase5_tests)

@@ -4,47 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "wc_exclusions.h"
 #include "wc_rules.h"
 #include "wc_safety.h"
-
-typedef struct worker_excl_ctx {
-    char paths[WC_MAX_EXCLUSIONS][WC_PATH_CAP];
-    const char *ptrs[WC_MAX_EXCLUSIONS];
-    size_t lens[WC_MAX_EXCLUSIONS];
-    int count;
-} worker_excl_ctx;
-
-static bool worker_is_excluded(const char *path, void *user) {
-    const worker_excl_ctx *ctx = (const worker_excl_ctx *)user;
-    if (!ctx || ctx->count <= 0 || !path || !path[0]) return false;
-    char norm[WC_PATH_CAP];
-    if (!wc_safety_normalize_path(path, norm, sizeof norm)) return false;
-    return wc_exclusion_matches_norm(norm, ctx->ptrs, ctx->lens, ctx->count);
-}
 
 typedef struct worker_sample_ctx {
     wc_worker *w;
     const char *target_id;
 } worker_sample_ctx;
-
-typedef struct worker_quarantine_ctx {
-    wc_worker *w;
-    const char *target_id;
-} worker_quarantine_ctx;
-
-static bool worker_quarantine_cb(const char *path, void *user) {
-    worker_quarantine_ctx *ctx = (worker_quarantine_ctx *)user;
-    if (!ctx || !ctx->w || !ctx->w->quarantine || !ctx->w->quarantine->open || !path || !path[0]) {
-        return false;
-    }
-    wada_err err;
-    wada_err_clear(&err);
-    if (ctx->w->quarantine_mu) wc_mutex_lock(ctx->w->quarantine_mu);
-    wada_status st = wc_quarantine_add(ctx->w->quarantine, path, ctx->target_id, false, NULL, &err);
-    if (ctx->w->quarantine_mu) wc_mutex_unlock(ctx->w->quarantine_mu);
-    return st == WADA_OK;
-}
 
 static void worker_sample(const char *path, uint64_t bytes, void *user) {
     worker_sample_ctx *ctx = (worker_sample_ctx *)user;
@@ -64,22 +30,10 @@ static void worker_entry(void *user) {
     wc_worker *w = (wc_worker *)user;
     bool is_admin = wc_plat_is_admin();
 
-    worker_excl_ctx *excl_ctx = (worker_excl_ctx *)calloc(1, sizeof *excl_ctx);
-
     wc_mutex_lock(w->mu);
     wc_job_kind kind = w->snap.kind;
     bool dry_run = w->snap.dry_run;
     int count = w->job_target_count;
-    if (excl_ctx) {
-        int ec = w->exclusion_count;
-        if (ec > WC_MAX_EXCLUSIONS) ec = WC_MAX_EXCLUSIONS;
-        for (int i = 0; i < ec; i++) {
-            snprintf(excl_ctx->paths[i], sizeof excl_ctx->paths[i], "%s", w->exclusions[i]);
-            excl_ctx->ptrs[i] = excl_ctx->paths[i];
-            excl_ctx->lens[i] = strlen(excl_ctx->paths[i]);
-        }
-        excl_ctx->count = ec;
-    }
     wc_mutex_unlock(w->mu);
 
     const char *proc_names[WC_MAX_TARGETS];
@@ -91,8 +45,6 @@ static void worker_entry(void *user) {
                             : "";
     }
     wc_plat_processes_running(proc_names, count, proc_running);
-
-    wc_exclude_fn excl_fn = (excl_ctx && excl_ctx->count > 0) ? worker_is_excluded : NULL;
 
     for (int i = 0; i < count; i++) {
         if (w->cancel_flag) break;
@@ -173,8 +125,7 @@ static void worker_entry(void *user) {
                     remaining = WC_MAX_PREVIEW - samples_before;
                     wc_mutex_unlock(w->mu);
                     worker_sample_ctx sample_ctx = {w, def->id};
-                    if (wc_plat_scan_target_preview(def->kind, path, &w->cancel_flag, excl_fn,
-                                                    excl_ctx,
+                    if (wc_plat_scan_target_preview(def->kind, path, &w->cancel_flag, NULL, NULL,
                                                     remaining > 0 ? worker_sample : NULL,
                                                     &sample_ctx, remaining, &files, &bytes)) {
                         res.analyzed = true;
@@ -205,22 +156,14 @@ static void worker_entry(void *user) {
                         snprintf(res.note, sizeof res.note, "Skipped (browser running)");
                     } else {
                         uint64_t files = 0, bytes = 0, skipped = 0;
-                        worker_quarantine_ctx qctx = {w, def->id};
-                        wc_quarantine_fn qfn = (def->quarantine && !dry_run && w->quarantine &&
-                                                w->quarantine->open)
-                                                   ? worker_quarantine_cb
-                                                   : NULL;
-                        if (wc_plat_clean_target_ex(def->kind, path, dry_run, &w->cancel_flag,
-                                                    excl_fn, excl_ctx, qfn, qfn ? &qctx : NULL,
-                                                    &files, &bytes, &skipped)) {
+                        if (wc_plat_clean_target(def->kind, path, dry_run, &w->cancel_flag, NULL,
+                                                 NULL, &files, &bytes, &skipped)) {
                             res.cleaned = true;
                             res.files_cleaned = files;
                             res.bytes_cleaned = bytes;
                             res.skipped_count = skipped;
                             if (dry_run) {
                                 snprintf(res.note, sizeof res.note, "Dry-run preview");
-                            } else if (qfn && files > 0) {
-                                snprintf(res.note, sizeof res.note, "Moved to Quarantine");
                             } else if (skipped > 0) {
                                 snprintf(res.note, sizeof res.note, "Some files skipped (in use)");
                             }
@@ -259,48 +202,13 @@ static void worker_entry(void *user) {
     w->running = false;
     w->dirty = true;
     wc_mutex_unlock(w->mu);
-
-    free(excl_ctx);
-}
-
-void wc_worker_set_exclusions(wc_worker *w, const wc_exclusion_item *items, int count) {
-    if (!w || !w->mu) return;
-    wc_mutex_lock(w->mu);
-    int n = 0;
-    if (items && count > 0) {
-        if (count > WC_MAX_EXCLUSIONS) count = WC_MAX_EXCLUSIONS;
-        for (int i = 0; i < count; i++) {
-            if (items[i].path[0]) {
-                if (wc_safety_normalize_path(items[i].path, w->exclusions[n],
-                                             sizeof w->exclusions[n])) {
-                    n++;
-                }
-            }
-        }
-    }
-    w->exclusion_count = n;
-    wc_mutex_unlock(w->mu);
-}
-
-void wc_worker_set_quarantine(wc_worker *w, wc_quarantine *q) {
-    if (!w || !w->mu) return;
-    wc_mutex_lock(w->mu);
-    w->quarantine = q;
-    wc_mutex_unlock(w->mu);
 }
 
 bool wc_worker_init(wc_worker *w) {
     if (!w) return false;
     memset(w, 0, sizeof *w);
     w->mu = wc_mutex_create();
-    w->quarantine_mu = wc_mutex_create();
-    if (!w->mu || !w->quarantine_mu) {
-        if (w->mu) wc_mutex_destroy(w->mu);
-        if (w->quarantine_mu) wc_mutex_destroy(w->quarantine_mu);
-        w->mu = NULL;
-        w->quarantine_mu = NULL;
-        return false;
-    }
+    if (!w->mu) return false;
     w->snap.state = WC_JOB_IDLE;
     w->snap.current_index = -1;
     w->dirty = true;
@@ -321,10 +229,6 @@ void wc_worker_destroy(wc_worker *w) {
     if (w->mu) {
         wc_mutex_destroy(w->mu);
         w->mu = NULL;
-    }
-    if (w->quarantine_mu) {
-        wc_mutex_destroy(w->quarantine_mu);
-        w->quarantine_mu = NULL;
     }
 }
 

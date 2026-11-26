@@ -135,39 +135,6 @@ static int ascii_strcasecmp(const char *a, const char *b) {
     return tolower((unsigned char)*a) - tolower((unsigned char)*b);
 }
 
-static void test_startup_approved_codec(void) {
-    CHECK(wc_startup_approved_is_enabled(NULL, 0));
-
-    uint8_t en[12] = {0x02, 0, 0, 0};
-    uint8_t dis[12] = {0x03, 0, 0, 0};
-    uint8_t en6[12] = {0x06, 0, 0, 0};
-    CHECK(wc_startup_approved_is_enabled(en, sizeof en));
-    CHECK(!wc_startup_approved_is_enabled(dis, sizeof dis));
-    CHECK(wc_startup_approved_is_enabled(en6, sizeof en6));
-
-    uint8_t buf[12];
-    wc_startup_approved_encode(false, buf);
-    CHECK(buf[0] == 0x03u);
-    CHECK(!wc_startup_approved_is_enabled(buf, sizeof buf));
-
-    wc_startup_approved_encode(true, buf);
-    CHECK(buf[0] == 0x02u);
-    CHECK(wc_startup_approved_is_enabled(buf, sizeof buf));
-    for (int i = 1; i < 12; i++) CHECK(buf[i] == 0);
-}
-
-static void test_startup_list_readonly(void) {
-    wc_startup_item *items = (wc_startup_item *)calloc(WC_MAX_STARTUP, sizeof *items);
-    CHECK(items != NULL);
-    int count = -1;
-    CHECK(wc_plat_list_startup(items, WC_MAX_STARTUP, &count));
-    CHECK(count >= 0 && count <= WC_MAX_STARTUP);
-    for (int i = 0; i < count; i++) {
-        CHECK(items[i].name[0] != '\0');
-    }
-    free(items);
-}
-
 static void test_apps_list_readonly(void) {
     wc_app_item *items = (wc_app_item *)calloc(WC_MAX_APPS, sizeof *items);
     CHECK(items != NULL);
@@ -271,8 +238,6 @@ int main(void) {
     delete_tree_for_cleanup(test_root);
     CHECK(make_dir_utf8(test_root));
 
-    test_startup_approved_codec();
-    test_startup_list_readonly();
     test_apps_list_readonly();
     test_disk_top_insert();
     test_disk_analyze_fixture(test_root);

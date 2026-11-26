@@ -1,3 +1,8 @@
+> **Superseded (v0.2).** This review covers v0.1.0 and the nine-screen app it
+> shipped with. v0.2 "One Door" removed most of those screens; the current
+> direction, screen map and decision log are in
+> [../PLAN-ONE-DOOR.md](../PLAN-ONE-DOOR.md). The v0.1 findings below remain as
+> evidence for why the cut happened — several file links point at deleted code.
 # Wada Clean — UI/UX review, benchmark, and improvement plan
 
 > Review of `wada-clean` v0.1.0 (commit `72ca3ea`), based on the built `wada_clean.exe` and a

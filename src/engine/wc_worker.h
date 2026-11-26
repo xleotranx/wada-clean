@@ -4,7 +4,6 @@
 #include <stdbool.h>
 
 #include "wc_platform.h"
-#include "wc_quarantine.h"
 #include "wc_types.h"
 
 #define WC_MAX_PREVIEW 256
@@ -17,7 +16,6 @@ typedef struct wc_preview_item {
 
 typedef struct wc_worker {
     wc_mutex *mu;
-    wc_mutex *quarantine_mu;
     wc_thread *thread;
     volatile int cancel_flag;
     bool running;
@@ -26,11 +24,6 @@ typedef struct wc_worker {
     wc_target_def job_defs[WC_MAX_TARGETS];
     bool job_selected[WC_MAX_TARGETS];
     int job_target_count;
-
-    char exclusions[WC_MAX_EXCLUSIONS][WC_PATH_CAP];
-    int exclusion_count;
-
-    wc_quarantine *quarantine;
 
     wc_preview_item previews[WC_MAX_PREVIEW];
     int preview_count;
@@ -41,9 +34,6 @@ typedef struct wc_worker {
 
 bool wc_worker_init(wc_worker *w);
 void wc_worker_destroy(wc_worker *w);
-
-void wc_worker_set_exclusions(wc_worker *w, const wc_exclusion_item *items, int count);
-void wc_worker_set_quarantine(wc_worker *w, wc_quarantine *q);
 
 bool wc_worker_start(wc_worker *w, wc_job_kind kind, bool dry_run,
                      const wc_target_def *defs, const bool *selected, int target_count);

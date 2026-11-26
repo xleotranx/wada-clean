@@ -7,11 +7,8 @@
 #include "wada_product.h"
 #include "wada_ui.h"
 #include "wc_disk.h"
-#include "wc_exclusions.h"
 #include "wc_history.h"
-#include "wc_leftovers.h"
 #include "wc_list_job.h"
-#include "wc_quarantine.h"
 #include "wc_types.h"
 #include "wc_worker.h"
 
@@ -33,7 +30,7 @@ typedef enum wc_view_id {
     WC_VIEW_DISK = 3
 } wc_view_id;
 
-#define WC_APP_VERSION "0.1.0"
+#define WC_APP_VERSION "0.2.0"
 
 typedef struct wc_cleaner_state {
     wada_app *app;
@@ -68,17 +65,7 @@ typedef struct wc_cleaner_state {
     int history_selected;
     bool about_open;
 
-    wc_quarantine quarantine;
-    wc_quarantine_item quarantine_items[WC_MAX_QUARANTINE];
-    int quarantine_count;
-
     wada_ui_confirm confirm;
-
-    /* Exclusions are no longer editable in the UI, but rules already persisted
-     * must keep being honoured by the worker until the engine is removed. */
-    wc_exclusions exclusions;
-    wc_exclusion_item exclusion_items[WC_MAX_EXCLUSIONS];
-    int exclusion_count;
 
     /* Installed Apps view */
     wc_app_item *app_items;
@@ -96,9 +83,6 @@ typedef struct wc_cleaner_state {
     int filtered_app_count;
     int app_selected;
     wada_ui_confirm app_confirm;
-    wc_leftover_worker leftover_worker;
-    wc_leftover_snapshot *leftover_snap;
-    bool leftover_running;
 
     /* Space view */
     wc_disk_worker disk_worker;
@@ -143,8 +127,6 @@ void wc_cleaner_start_clean(wc_cleaner_state *st);
 const wc_history_entry *wc_last_clean_run(const wc_cleaner_state *st);
 void wc_cleaner_cancel_job(wc_cleaner_state *st);
 
-void wc_exclusions_reload(wc_cleaner_state *st);
-void wc_quarantine_reload(wc_cleaner_state *st);
 void wc_apps_refresh(wc_cleaner_state *st);
 void wc_disk_start_scan(wc_cleaner_state *st);
 
