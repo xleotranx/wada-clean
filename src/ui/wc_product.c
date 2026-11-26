@@ -73,6 +73,8 @@ void wc_quarantine_reload(wc_cleaner_state *st) {
     }
 }
 
+static void report_scan_status(wc_cleaner_state *st, wada_app *app);
+
 /* 0 = system/app/dev junk, 1 = browsers, 2 = Recycle Bin. */
 int wc_target_group(const wc_target_def *def) {
     if (!def) return 0;
@@ -90,6 +92,9 @@ void wc_home_apply_group(wc_cleaner_state *st, int group) {
         st->selected[i] = st->group_on[group];
     }
     wada_ui_confirm_reset(&st->confirm);
+    /* The status bar quotes the same number as the hero, so it must follow a
+     * group toggle rather than wait for the next scan. */
+    if (st->app && st->has_analyzed) report_scan_status(st, st->app);
 }
 
 void wc_home_refresh_recycle(wc_cleaner_state *st) {
@@ -112,7 +117,82 @@ void wc_home_scan(wc_cleaner_state *st) {
 
 void wc_home_clean(wc_cleaner_state *st) {
     if (!st) return;
+    /* The count shown on the Recycle Bin row may be minutes old; re-read it
+     * right before the irreversible decision is armed. */
+    if (st->group_on[2]) wc_home_refresh_recycle(st);
     wc_cleaner_start_clean(st);
+}
+
+static int count_flagged(const wc_worker_snapshot *snap, bool admin) {
+    int n = 0;
+    for (int i = 0; i < snap->target_count; i++) {
+        if (admin ? snap->results[i].admin_blocked : snap->results[i].browser_running) n++;
+    }
+    return n;
+}
+
+uint64_t wc_home_selected_bytes(const wc_cleaner_state *st) {
+    uint64_t total = 0;
+    if (!st) return 0;
+    for (int i = 0; i < st->target_count; i++) {
+        if (!st->selected[i]) continue;
+        if (st->defs[i].kind == WC_TARGET_RECYCLE_BIN) {
+            if (st->recycle_known) total += st->recycle_bytes;
+            continue;
+        }
+        const wc_target_result *r = &st->snap.results[i];
+        if (r->browser_running) continue;
+        if (r->analyzed) total += r->bytes_found;
+    }
+    return total;
+}
+
+/* The status bar is the only place a non-blocking job reports back, so it has
+ * to state the same number the hero does, in plain words. */
+static void report_scan_status(wc_cleaner_state *st, wada_app *app) {
+    uint64_t bytes = wc_home_selected_bytes(st);
+    char sz[32];
+    wc_format_bytes(bytes, sz, sizeof sz);
+    char msg[224];
+    if (bytes == 0) {
+        snprintf(msg, sizeof msg, "%s", wada_tr("Nothing to clean"));
+    } else {
+        wada_trf(msg, sizeof msg, "Found %s you can free", sz);
+    }
+
+    int admin = count_flagged(&st->snap, true);
+    int browsers = count_flagged(&st->snap, false);
+    size_t used = strlen(msg);
+    if (admin == 1 && used < sizeof msg) {
+        wada_trf(msg + used, sizeof msg - used, " · 1 location needs administrator");
+    } else if (admin > 1 && used < sizeof msg) {
+        wada_trf(msg + used, sizeof msg - used, " · %d locations need administrator", admin);
+    }
+    used = strlen(msg);
+    if (browsers == 1 && used < sizeof msg) {
+        wada_trf(msg + used, sizeof msg - used, " · 1 cache skipped (in use)");
+    } else if (browsers > 1 && used < sizeof msg) {
+        wada_trf(msg + used, sizeof msg - used, " · %d caches skipped (in use)", browsers);
+    }
+    wada_app_set_status(app, msg);
+}
+
+static void report_clean_status(wc_cleaner_state *st, wada_app *app) {
+    char sz[32];
+    wc_format_bytes(st->snap.total_bytes_cleaned, sz, sizeof sz);
+    char msg[192];
+    if (st->snap.dry_run) {
+        wada_trf(msg, sizeof msg, "Preview: would free %s across %llu files", sz,
+                 (unsigned long long)st->snap.total_files_cleaned);
+    } else if (st->snap.total_skipped > 0) {
+        wada_trf(msg, sizeof msg, "Freed %s across %llu files · %llu skipped", sz,
+                 (unsigned long long)st->snap.total_files_cleaned,
+                 (unsigned long long)st->snap.total_skipped);
+    } else {
+        wada_trf(msg, sizeof msg, "Freed %s across %llu files", sz,
+                 (unsigned long long)st->snap.total_files_cleaned);
+    }
+    wada_app_set_status(app, msg);
 }
 
 const wc_history_entry *wc_last_clean_run(const wc_cleaner_state *st) {
@@ -131,7 +211,7 @@ void wc_cleaner_start_analyze(wc_cleaner_state *st) {    if (!st || st->running)
     if (wc_worker_start(&st->worker, WC_JOB_ANALYZE, false, st->defs, st->selected,
                         st->target_count)) {
         st->running = true;
-        wada_app_set_status(st->app, wada_tr("Analysis started"));
+        wada_app_set_status(st->app, wada_tr("Checking for junk…"));
     }
 }
 
@@ -142,7 +222,7 @@ void wc_cleaner_start_clean(wc_cleaner_state *st) {
         return;
     }
     if (!st->dry_run && !wada_ui_confirm_step(&st->confirm, 0, 300)) {
-        wada_app_set_status(st->app, wada_tr("Click Confirm Clean to confirm."));
+        wada_app_set_status(st->app, wada_tr("Click again to confirm — nothing has been deleted yet."));
         return;
     }
     wada_ui_confirm_reset(&st->confirm);
@@ -152,7 +232,8 @@ void wc_cleaner_start_clean(wc_cleaner_state *st) {
     if (wc_worker_start(&st->worker, WC_JOB_CLEAN, st->dry_run, st->defs, st->selected,
                         st->target_count)) {
         st->running = true;
-        wada_app_set_status(st->app, wada_tr(st->dry_run ? "Dry-run preview" : "Clean"));
+        wada_app_set_status(st->app,
+                            wada_tr(st->dry_run ? "Previewing…" : "Freeing space…"));
     }
 }
 
@@ -424,18 +505,19 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
                     wc_worker_preview_copy(&st->worker, st->preview_items, WC_MAX_PREVIEW);
                 st->preview_ui_truncated = wc_worker_preview_truncated(&st->worker);
                 wc_home_refresh_recycle(st);
-                wada_app_set_status(app, wada_tr("Analysis complete"));
+                report_scan_status(st, app);
             } else if (st->snap.kind == WC_JOB_CLEAN) {
                 record_clean_history(st);
                 wc_quarantine_reload(st);
                 wc_home_refresh_recycle(st);
                 st->sys_drive_ok = wc_plat_disk_free_space(WC_SYS_DRIVE, &st->sys_drive_free,
                                                            &st->sys_drive_total);
-                wada_app_set_status(
-                    app, wada_tr(st->snap.dry_run ? "Dry-run preview complete" : "Clean complete"));
+                report_clean_status(st, app);
             }
         } else if (st->snap.state == WC_JOB_CANCELLED) {
-            wada_app_set_status(app, wada_tr("Job cancelled"));
+            wada_app_set_status(app, wada_tr(st->snap.kind == WC_JOB_CLEAN
+                                                 ? "Cancelled — nothing was deleted."
+                                                 : "Scan cancelled."));
         } else if (st->snap.state == WC_JOB_ERROR && st->snap.error_msg[0]) {
             wada_app_set_status(app, st->snap.error_msg);
         }
@@ -520,7 +602,7 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
         cui_column(ui, .width = CUI_PX(196), .height = CUI_FILL,
                    .bg = CUI_COLOR_SURFACE_MUTED, .pad = 12, .gap = 4) {
             cui_text(ui, wada_tr("Wada Clean"), .font = CUI_FONT_DISPLAY, .size = 18);
-            cui_text(ui, wada_tr("System Utility"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
+            cui_text(ui, wada_tr("Free up disk space"), .size = 12, .color = CUI_COLOR_TEXT_MUTED);
 
             if (cui_nav_item(ui, wada_tr("Free up space"), .icon = CUI_ICON_SPARKLES,
                              .selected = st->active_view == WC_VIEW_HOME,
@@ -538,15 +620,6 @@ static void wc_cleaner_frame(void *state, wada_app *app) {
             }
 
             cui_box(ui, .height = CUI_FILL) {}
-
-            if (!st->is_admin) {
-                if (cui_button(ui, wada_tr("Restart as Admin"), .variant = CUI_BUTTON_OUTLINE,
-                               .size = CUI_SIZE_SM, .icon = CUI_ICON_SHIELD, .full_width = true)) {
-                    wc_relaunch_admin(st, app);
-                }
-            }
-            cui_badge(ui, wada_tr(st->is_admin ? "Administrator" : "Standard User"),
-                      .tone = st->is_admin ? CUI_TONE_SUCCESS : CUI_TONE_NEUTRAL);
         }
 
         cui_separator(ui);

@@ -36,22 +36,6 @@ static void group_totals(const wc_cleaner_state *st, int group, uint64_t *bytes,
     }
 }
 
-static uint64_t selected_bytes(const wc_cleaner_state *st) {
-    uint64_t total = 0;
-    for (int i = 0; i < st->target_count; i++) {
-        if (!st->selected[i]) continue;
-        if (st->defs[i].kind == WC_TARGET_RECYCLE_BIN) {
-            if (st->recycle_known) total += st->recycle_bytes;
-            continue;
-        }
-        const wc_target_result *r = &st->snap.results[i];
-        /* Never promise space the cleaner will skip (open browser, in-use files). */
-        if (r->browser_running) continue;
-        if (r->analyzed) total += r->bytes_found;
-    }
-    return total;
-}
-
 static bool id_selected(const wc_cleaner_state *st, const char *id) {
     for (int i = 0; i < st->target_count; i++) {
         if (strcmp(st->defs[i].id, id) == 0) return st->selected[i];
@@ -60,7 +44,7 @@ static bool id_selected(const wc_cleaner_state *st, const char *id) {
 }
 
 static void group_meta(const wc_cleaner_state *st, int group, uint64_t files, int browsers,
-                       int admin, char *out, size_t cap) {
+                       char *out, size_t cap) {
     if (group == 2) {
         if (st->recycle_known && files > 0) {
             wada_trf(out, cap, "%llu items · emptied permanently", (unsigned long long)files);
@@ -77,11 +61,7 @@ static void group_meta(const wc_cleaner_state *st, int group, uint64_t files, in
 
     char extra[64];
     extra[0] = '\0';
-    if (browsers > 0) {
-        snprintf(extra, sizeof extra, "%s", wada_tr("browser open — skipped"));
-    } else if (admin > 0 && !st->is_admin) {
-        snprintf(extra, sizeof extra, "%s", wada_tr("needs administrator"));
-    }
+    if (browsers > 0) snprintf(extra, sizeof extra, "%s", wada_tr("browser open — skipped"));
 
     if (st->has_analyzed) {
         if (extra[0]) {
@@ -96,8 +76,8 @@ static void group_meta(const wc_cleaner_state *st, int group, uint64_t files, in
     }
 }
 
-static void draw_group_row(wc_cleaner_state *st, cui_ctx *ui, int group, const char *label,
-                           const char *icon) {
+static void draw_group_row(wc_cleaner_state *st, wada_app *app, cui_ctx *ui, int group,
+                           const char *label, const char *icon) {
     uint64_t bytes = 0, files = 0;
     int targets = 0, browsers = 0, admin = 0;
     group_totals(st, group, &bytes, &files, &targets, &browsers, &admin);
@@ -112,7 +92,7 @@ static void draw_group_row(wc_cleaner_state *st, cui_ctx *ui, int group, const c
     }
 
     char meta[224];
-    group_meta(st, group, files, browsers, admin, meta, sizeof meta);
+    group_meta(st, group, files, browsers, meta, sizeof meta);
 
     char switch_id[24];
     snprintf(switch_id, sizeof switch_id, "##group%d", group);
@@ -130,13 +110,35 @@ static void draw_group_row(wc_cleaner_state *st, cui_ctx *ui, int group, const c
             cui_row(ui, .align = CUI_ALIGN_CENTER, .gap = 12) {
                 cui_text(ui, size_str, .font = CUI_FONT_DISPLAY, .size = 18, .tabular = true);
                 if (cui_switch(ui, switch_id, &st->group_on[group], .disabled = st->running)) {
+                    /* The count is the consequence; re-read it the moment the
+                     * Recycle Bin is opted into. */
+                    if (group == 2 && st->group_on[2]) wc_home_refresh_recycle(st);
                     wc_home_apply_group(st, group);
                 }
             }
         }
+        if (group == 0 && !st->is_admin && admin > 0) {
+            cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER, .gap = 8) {
+                cui_text(ui, wada_tr("Some system locations need administrator access."), .size = 12,
+                         .color = CUI_COLOR_TEXT_MUTED);
+                if (cui_button(ui, wada_tr("Restart as administrator"),
+                               .variant = CUI_BUTTON_GHOST, .size = CUI_SIZE_SM,
+                               .icon = CUI_ICON_SHIELD)) {
+                    wc_relaunch_admin(st, app);
+                }
+            }
+        }
         if (group == 2 && st->group_on[2]) {
-            cui_text(ui, wada_tr("Empties the Recycle Bin permanently — this cannot be undone."),
-                     .size = 12, .color = CUI_COLOR_WARNING);
+            char warn[192];
+            if (st->recycle_known && files > 0) {
+                wada_trf(warn, sizeof warn,
+                         "%llu items (%s) will be deleted permanently. This cannot be undone.",
+                         (unsigned long long)files, size_str);
+            } else {
+                snprintf(warn, sizeof warn, "%s",
+                         wada_tr("The Recycle Bin will be emptied permanently. This cannot be undone."));
+            }
+            cui_alert(ui, warn, .tone = CUI_TONE_DANGER, .icon = CUI_ICON_CIRCLE_ALERT);
         }
     }
 }
@@ -258,7 +260,7 @@ void wc_view_home_draw(wc_cleaner_state *st, wada_app *app) {
     bool cleaning = st->running && st->snap.kind == WC_JOB_CLEAN;
     bool scanning = st->running && !cleaning;
     bool done = !st->running && st->snap.kind == WC_JOB_CLEAN && st->snap.state == WC_JOB_DONE;
-    uint64_t sel_bytes = selected_bytes(st);
+    uint64_t sel_bytes = wc_home_selected_bytes(st);
     bool confirming = wada_ui_confirm_active(&st->confirm, 0);
 
     char amount[32];
@@ -272,26 +274,34 @@ void wc_view_home_draw(wc_cleaner_state *st, wada_app *app) {
     char headline[128];
     char sub[256];
     if (cleaning) {
-        badge = "Freeing space…";
+        badge = st->snap.dry_run ? "Previewing…" : "Freeing space…";
         tone = CUI_TONE_INFO;
-        snprintf(headline, sizeof headline, "%s", wada_tr("Freeing space…"));
-        snprintf(sub, sizeof sub, "%s", wada_tr("Temporary files are deleted, not moved."));
+        snprintf(headline, sizeof headline, "%s",
+                 wada_tr(st->snap.dry_run ? "Previewing…" : "Freeing space…"));
+        snprintf(sub, sizeof sub, "%s",
+                 wada_tr(st->snap.dry_run ? "Preview only. Nothing is deleted."
+                                          : "Temporary files are deleted, not moved."));
     } else if (scanning) {
         badge = "Checking…";
         tone = CUI_TONE_INFO;
         snprintf(headline, sizeof headline, "%s", wada_tr("Checking your PC…"));
         snprintf(sub, sizeof sub, "%s", wada_tr("Only temporary files and caches are scanned."));
     } else if (done) {
-        badge = "Done";
-        tone = CUI_TONE_SUCCESS;
-        wada_trf(headline, sizeof headline, "%s freed", freed);
-        if (st->snap.total_skipped > 0) {
-            wada_trf(sub, sizeof sub,
-                     "Nothing personal was touched. %llu items were skipped because they were in use.",
-                     (unsigned long long)st->snap.total_skipped);
+        badge = st->snap.dry_run ? "Preview complete" : "Done";
+        tone = st->snap.dry_run ? CUI_TONE_INFO : CUI_TONE_SUCCESS;
+        if (st->snap.dry_run) {
+            wada_trf(headline, sizeof headline, "Would free %s", freed);
+            snprintf(sub, sizeof sub, "%s", wada_tr("Preview only. Nothing was deleted."));
         } else {
-            snprintf(sub, sizeof sub, "%s",
-                     wada_tr("Caches rebuild as needed. Your documents, photos and downloads were not touched."));
+            wada_trf(headline, sizeof headline, "%s freed", freed);
+            if (st->snap.total_skipped > 0) {
+                wada_trf(sub, sizeof sub,
+                         "Nothing personal was touched. %llu items were skipped because they were in use.",
+                         (unsigned long long)st->snap.total_skipped);
+            } else {
+                snprintf(sub, sizeof sub, "%s",
+                         wada_tr("Caches rebuild as needed. Your documents, photos and downloads were not touched."));
+            }
         }
     } else if (!st->has_analyzed) {
         badge = "Not scanned yet";
@@ -380,15 +390,24 @@ void wc_view_home_draw(wc_cleaner_state *st, wada_app *app) {
                 cui_progress(ui, frac, .width = CUI_FILL, .label = lbl, .show_value = true,
                              .tone = CUI_TONE_ACCENT);
             } else if (confirming) {
-                cui_text(ui, wada_tr("Click again to confirm. Temporary files are deleted permanently."),
-                         .size = 12, .color = CUI_COLOR_WARNING);
+                char confirm_msg[256];
+                if (st->group_on[2] && st->recycle_known && st->recycle_files > 0) {
+                    wada_trf(confirm_msg, sizeof confirm_msg,
+                             "Click again to free %s. Temporary files are deleted, and the Recycle Bin is emptied permanently.",
+                             amount);
+                } else {
+                    wada_trf(confirm_msg, sizeof confirm_msg,
+                             "Click again to free %s. Temporary files are deleted permanently.",
+                             amount);
+                }
+                cui_alert(ui, confirm_msg, .tone = CUI_TONE_WARNING, .icon = CUI_ICON_CIRCLE_ALERT);
             }
         }
 
         /* Three decisions, never twenty-seven checkboxes. */
-        draw_group_row(st, ui, 0, wada_tr("System junk"), CUI_ICON_CPU);
-        draw_group_row(st, ui, 1, wada_tr("Browser junk"), CUI_ICON_GLOBE);
-        draw_group_row(st, ui, 2, wada_tr("Recycle Bin"), CUI_ICON_TRASH_2);
+        draw_group_row(st, app, ui, 0, wada_tr("System junk"), CUI_ICON_CPU);
+        draw_group_row(st, app, ui, 1, wada_tr("Browser junk"), CUI_ICON_GLOBE);
+        draw_group_row(st, app, ui, 2, wada_tr("Recycle Bin"), CUI_ICON_TRASH_2);
 
         /* Footer */
         cui_row(ui, .width = CUI_FILL, .align = CUI_ALIGN_CENTER,

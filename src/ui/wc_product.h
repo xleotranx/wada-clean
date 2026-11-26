@@ -134,6 +134,11 @@ void wc_home_clean(wc_cleaner_state *st);
 void wc_home_apply_group(wc_cleaner_state *st, int group);
 void wc_home_refresh_recycle(wc_cleaner_state *st);
 
+/* Bytes the cleaner can actually free right now: selected, analysed, and not
+ * skipped because a browser holds them open. Shared by the headline and the
+ * status bar so the two can never disagree. */
+uint64_t wc_home_selected_bytes(const wc_cleaner_state *st);
+
 /* 0 = system/app/dev junk, 1 = browsers, 2 = Recycle Bin. */
 int wc_target_group(const wc_target_def *def);
 

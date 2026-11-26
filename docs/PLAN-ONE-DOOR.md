@@ -297,4 +297,32 @@ Any failure = not done. No "polish it a bit".
 
 ---
 
-*Next: sign-off on step 3 (harden the one destructive decision, honest status bar).*
+### Step 3 — done (2026-11-26)
+
+**Shipped**
+- **Recycle Bin states its consequence.** The item count and size are re-read the moment the group is switched on, and again when the clean is armed (so a stale number can't be used to justify an irreversible action). Enabling it shows a danger alert naming count and size: *"18 items (412 MB) will be deleted permanently. This cannot be undone."*
+- **One confirmation that restates everything.** The primary button turns red and reads `Confirm free up 462.2 MB`; an inline alert repeats the amount and what is permanent. The first click deletes nothing, any group toggle resets the confirmation, and the status bar says so.
+- **One admin path.** The sidebar `Restart as Admin` button and the `Standard User` badge are gone. A single inline `Restart as administrator` appears on the System junk row only when admin-only locations were actually skipped. Sidebar subtitle is now `Free up disk space`.
+- **Status bar states facts on the left**: `Checking for junk…`, then `Found 462.2 MB you can free · 1 location needs administrator · 1 cache skipped (in use)`, `Freed 462.2 MB across 2,451 files · 3 skipped`, `Cancelled — nothing was deleted.` It follows group toggles instead of waiting for the next scan.
+- **Dry-run is visibly different**: `Previewing…`, `Would free 462.2 MB`, `Preview only. Nothing was deleted.`
+- **One arithmetic source.** `wc_home_selected_bytes()` feeds both the hero and the status bar, so the two can no longer disagree.
+
+**Bugs the capture pass found, fixed before commit**
+1. Two contradictory numbers: the status bar reported all bytes *found* (1018.3 MB) while the hero promised bytes *freeable* (462.2 MB).
+2. Grammar: "1 locations need administrator", "1 caches skipped".
+
+**Vendor limitation, recorded rather than faked**
+The right side of the status bar (`dark  0.1.0`) is drawn by the shell at `vendor/wada-c/src/shell/wada_app.c:438-442`; there is no product API for it. Removing it needs an upstream `wada-c` change, which is a submodule bump, not a local edit. Step 5 decides: upstream the option, or stop advertising a theme toggle so `dark` stops being meaningful. The version string is corrected by the 0.2.0 bump regardless.
+
+**Evidence**
+- `ctest` green: 662 checks across 8 suites (phase2's count varies 121/122 with the number of startup entries on this machine — it is an environment count, not a failure). No test source edited.
+- Renders: `one-door-step3-home.png`, `one-door-step3-confirm.png`, `one-door-step3-recycle.png`.
+- The confirm state was captured with a temporary forced flag and then reverted; the real click path runs the same code.
+
+**Interim**
+- Group switches still don't rescore the rows (a row's size is "what was found"; the headline and status track the selection).
+- Version string and packaging are step 5.
+
+---
+
+*Next: sign-off on step 4 (big apps on the home screen, simplified Space view, Teams cache behind path verification).*
