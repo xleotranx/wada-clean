@@ -35,7 +35,9 @@ $exeDst = Join-Path $stageDir "wada_clean.exe"
 Copy-Item $exeSrc $exeDst -Force
 
 if ($stripExe) {
-    & $stripExe --strip-unneeded $exeDst
+    # Strip everything (`-s`), not just unneeded symbols: for a shipped exe the
+    # symbol table is dead weight and --strip-unneeded leaves it behind.
+    & $stripExe -s $exeDst
     if ($LASTEXITCODE -ne 0) { throw "strip failed" }
 }
 

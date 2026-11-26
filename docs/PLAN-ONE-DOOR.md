@@ -251,7 +251,7 @@ Any failure = not done. No "polish it a bit".
 
 **Evidence**
 - Build clean, `ctest` green: 661 checks across 8 suites, no test source edited.
-- Binary, stripped, same flags: **4,159,364 → 3,209,728 bytes (−949,636, −22.8%)** — the removed surfaces were already being linked in.
+- Binary, RelWithDebInfo build, stripped: **4,159,364 → 3,209,728 bytes** — the removed surfaces were already being linked in. (Not comparable to the v0.1.0 release; see the step 5 correction.)
 - First-run render: `docs/ux/images/one-door-step1-health.png` (real CUI capture, `CUI_SCREENSHOT`, scratch data dir).
 - `src/ui` is 4,263 → 2,857 lines.
 
@@ -285,7 +285,7 @@ Any failure = not done. No "polish it a bit".
 - Build clean, `ctest` green: 661 checks across 8 suites, still no test source edited.
 - Renders: `one-door-step2-home.png`, `one-door-step2-tools.png`, `one-door-step2-review.png` (real CUI captures, scratch data dir).
 - `src/ui`: 2,857 → **2,580 lines** — smaller than step 1 even with two brand-new screens. The two biggest single files (health 226, cleaner 814) became home 384 + tools 241, and the product shell shrank from 1,229 to 1,120.
-- Stripped binary: 4,159,364 → **3,200,512 bytes (−23.1%)**.
+- RelWithDebInfo build, stripped: **3,200,512 bytes**. (Not comparable to the v0.1.0 release; see the step 5 correction.)
 
 **Deviations / interim states**
 1. **Vietnamese copy for new strings is not written yet.** New labels fall back to English under `--lang vi`. Listed as open question 2; a native pass is needed before release.
@@ -343,7 +343,7 @@ The parent `...\MSTeams` directory holds the profile; WebView2 cache subfolders 
 **Evidence**
 - `ctest` green: 662 checks, 8 suites, no test source edited.
 - Renders: `one-door-step4-home.png`, `one-door-step4-space.png`.
-- UI 2,580 → **2,496 lines**; stripped binary **3,197,952 bytes** (76.9% of v0.1.0).
+- UI 2,580 → **2,496 lines**; RelWithDebInfo stripped binary **3,197,952 bytes**.
 
 **Interim / known**
 - On a machine with three big apps the home card extends past the first fold; the column scrolls, but the first screen now ends mid-card. Worth a spacing pass in step 5.
@@ -369,9 +369,11 @@ The parent `...\MSTeams` directory holds the profile; WebView2 cache subfolders 
 | `src/ui` lines | 4,263 | **1,906** |
 | Test suites / checks | 8 / 662 | **3 / 307** |
 | i18n pairs | 474 | **105** |
-| Stripped exe | 4,159,364 B | **3,119,616 B** (−25%) |
+| Release exe (shipped) | 4,159,364 B | **4,022,272 B** (−3.3%) |
 
-The exe fell less than the source because SQLite, the shell and the immediate-mode UI toolkit dominate the binary; the part we control is 69% smaller.
+The shipped exe barely moved because SQLite, the `wada-c` shell and the immediate-mode UI toolkit dominate it, and the Release build favours `-O3` code density over size. The source we control is 69% smaller; the binary is 3%.
+
+**Correction (release build).** The per-step binary figures in this log were measured on `RelWithDebInfo` builds and compared against a v0.1.0 `Release` exe — apples to oranges. The honest release-to-release comparison is above: **4,159,364 → 4,022,272 bytes (−3.3%)**. A `MinSizeRel` build is available via `package.ps1 -BuildType MinSizeRel` if binary size becomes a goal; it was not measured here.
 
 **Two mistakes made and fixed in this step (kept here on purpose)**
 1. `wc_win_dialog.c` looked like tray code, so it was deleted with the automation backend. It was actually the native folder picker; the link failed and it came back as `wc_win_folder.c`. Verify before deleting.
